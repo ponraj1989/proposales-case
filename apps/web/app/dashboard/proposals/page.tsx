@@ -88,9 +88,9 @@ export default function ProposalsPage() {
       render: (item) => (
         <div className="text-sm">
           <p className="text-gray-700">{(item.contact_name || item.recipient_name || '—') as string}</p>
-          {item.contact_email && (
+          {item.contact_email ? (
             <p className="text-xs text-gray-400">{item.contact_email as string}</p>
-          )}
+          ) : null}
         </div>
       ),
     },

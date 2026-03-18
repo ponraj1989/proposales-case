@@ -48,6 +48,13 @@ export async function POST(request: Request) {
       messages,
       tools,
       maxSteps: 10,
+      onError({ error }) {
+        log.error('Stream error from AI provider', {
+          conversationId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      },
       async onFinish({ response }) {
         log.info('AI chat completed', { conversationId, responseMessages: response.messages.length });
         if (conversationId) {
@@ -75,7 +82,13 @@ export async function POST(request: Request) {
       },
     });
 
-    return result.toDataStreamResponse();
+    return result.toDataStreamResponse({
+      getErrorMessage: (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.error('Stream response error', { conversationId, error: msg });
+        return msg;
+      },
+    });
   } catch (err) {
     log.error('AI chat error', {
       error: err instanceof Error ? err.message : String(err),

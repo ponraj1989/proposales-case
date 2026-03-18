@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createHash, timingSafeEqual } from 'crypto';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { authOptions } from '@/lib/auth-options';
 import { createLogger } from './logger';
 
 const log = createLogger('auth');

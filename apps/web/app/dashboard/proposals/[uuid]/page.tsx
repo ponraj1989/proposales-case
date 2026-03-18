@@ -162,12 +162,12 @@ export default function ProposalDetailPage() {
                     <label className="text-xs font-medium text-gray-500 uppercase">Title</label>
                     <p className="mt-1 text-gray-900">{(proposal.title_md ?? 'Untitled') as string}</p>
                   </div>
-                  {proposal.description_md && (
+                  {proposal.description_md ? (
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Description</label>
                       <p className="mt-1 text-gray-700 whitespace-pre-wrap">{proposal.description_md as string}</p>
                     </div>
-                  )}
+                  ) : null}
                   <div className="flex flex-wrap gap-4">
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Status</label>
@@ -192,7 +192,7 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Blocks */}
-          {Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 && (
+          {Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Blocks ({(proposal.blocks as unknown[]).length})</CardTitle>
@@ -206,21 +206,21 @@ export default function ProposalDetailPage() {
                         <p className="text-xs text-gray-500">{block.type as string}</p>
                       </div>
                       <div className="text-right">
-                        {block.unit_value_with_discount_with_tax != null && (
+                        {block.unit_value_with_discount_with_tax != null ? (
                           <p className="text-sm font-medium tabular-nums">
                             {formatCurrency(block.unit_value_with_discount_with_tax as number, (proposal.currency as string) || 'USD')}
                           </p>
-                        )}
-                        {block.quantity != null && (
+                        ) : null}
+                        {block.quantity != null ? (
                           <p className="text-xs text-gray-500">Qty: {block.quantity as number}</p>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   ))}
                 </div>
               </CardContent>
             </Card>
-          )}
+          ) : null}
         </div>
 
         {/* Sidebar */}
@@ -282,38 +282,38 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Tracking */}
-          {proposal.tracking && (
+          {proposal.tracking ? (
             <Card>
               <CardHeader>
                 <CardTitle>Activity</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {(proposal.tracking as Record<string, unknown>).sent_at && (
+                  {(proposal.tracking as Record<string, unknown>).sent_at ? (
                     <div className="flex justify-between">
                       <span className="text-gray-500">Sent</span>
                       <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).sent_at as string).getTime() / 1000)}</span>
                     </div>
-                  )}
-                  {(proposal.tracking as Record<string, unknown>).first_viewed_at && (
+                  ) : null}
+                  {(proposal.tracking as Record<string, unknown>).first_viewed_at ? (
                     <div className="flex justify-between">
                       <span className="text-gray-500">First viewed</span>
                       <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).first_viewed_at as string).getTime() / 1000)}</span>
                     </div>
-                  )}
-                  {(proposal.tracking as Record<string, unknown>).number_of_views != null && (
+                  ) : null}
+                  {(proposal.tracking as Record<string, unknown>).number_of_views != null ? (
                     <div className="flex justify-between">
                       <span className="text-gray-500">Views</span>
                       <span>{(proposal.tracking as Record<string, unknown>).number_of_views as number}</span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
           {/* Signatures */}
-          {Array.isArray(proposal.signatures) && (proposal.signatures as unknown[]).length > 0 && (
+          {Array.isArray(proposal.signatures) && (proposal.signatures as unknown[]).length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Signatures</CardTitle>
@@ -329,7 +329,7 @@ export default function ProposalDetailPage() {
                 </div>
               </CardContent>
             </Card>
-          )}
+          ) : null}
         </div>
       </div>
 

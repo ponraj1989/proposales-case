@@ -17,7 +17,10 @@ const proposalesPreset: Partial<Config> = {
         'text-primary': colors.primary[900],
         'text-muted': colors.gray[500],
       },
-      fontFamily: typography.fontFamily,
+      fontFamily: {
+        sans: [...typography.fontFamily.sans],
+        mono: [...typography.fontFamily.mono],
+      },
       borderRadius: {
         card: '0.75rem',
         button: '0.5rem',
