@@ -21,6 +21,7 @@
     "@vercel/analytics": "^2.0.1",
     "ai": "^4.1.0",
     "class-variance-authority": "^0.7.1",
+    "client-only": "^0.0.1",
     "clsx": "^2.1.0",
     "ioredis": "^5.10.0",
     "lucide-react": "^0.460.0",

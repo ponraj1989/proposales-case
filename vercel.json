@@ -3,6 +3,5 @@
   "buildCommand": "cd ../.. && npx turbo build --filter=@proposales/web",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "installCommand": "cd ../.. && npm install --legacy-peer-deps",
-  "rootDirectory": "apps/web"
+  "installCommand": "cd ../.. && npm install --legacy-peer-deps"
 }
