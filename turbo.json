@@ -4,7 +4,20 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": [
+        "PROPOSALES_API_URL",
+        "PROPOSALES_API_TOKEN",
+        "AUTHORIZED_KEYS",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "ALLOWED_EMAILS",
+        "ALLOWED_DOMAINS",
+        "REDIS_URL",
+        "OPENAI_API_KEY"
+      ]
     },
     "dev": {
       "cache": false,
