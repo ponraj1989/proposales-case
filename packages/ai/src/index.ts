@@ -11,6 +11,7 @@ import {
   createListTemplatesTool,
   createAnalyzePortfolioTool,
   createRenderChartTool,
+  createQueryProposalDataTool,
   createSuggestPricingTool,
 } from './tools';
 export { systemPrompt, salesAdvisorPrompt, proposalWriterPrompt } from './prompts';
@@ -29,6 +30,7 @@ export function createAllTools(sdk: ProposalesSDK) {
     listTemplates: createListTemplatesTool(sdk),
     analyzePortfolio: createAnalyzePortfolioTool(sdk),
     renderChart: createRenderChartTool(),
+    queryProposalData: createQueryProposalDataTool(sdk),
     suggestPricing: createSuggestPricingTool(sdk),
   };
 }

@@ -21,6 +21,9 @@ build/
 # Debug
 npm-debug.log*
 
+# Logs
+logs/
+
 # IDE
 .vscode/
 .idea/

@@ -2,6 +2,9 @@ import { cookies } from 'next/headers';
 import { createHash, timingSafeEqual } from 'crypto';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { createLogger } from './logger';
+
+const log = createLogger('auth');
 
 const SESSION_COOKIE = 'proposales_session';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
@@ -37,7 +40,11 @@ export function validateApiKey(key: string): boolean {
 }
 
 export async function createSession(apiKey: string): Promise<boolean> {
-  if (!validateApiKey(apiKey)) return false;
+  if (!validateApiKey(apiKey)) {
+    log.warn('Invalid API key login attempt');
+    return false;
+  }
+  log.info('API key session created');
 
   const sessionToken = hashKey(apiKey + Date.now().toString());
   const cookieStore = await cookies();

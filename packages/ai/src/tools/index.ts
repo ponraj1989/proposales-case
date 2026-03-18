@@ -16,5 +16,6 @@ export {
 export {
   createAnalyzePortfolioTool,
   createRenderChartTool,
+  createQueryProposalDataTool,
   createSuggestPricingTool,
 } from './analytics';

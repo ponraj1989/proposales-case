@@ -1,23 +1,26 @@
 import { NextResponse } from 'next/server';
 import { checkRateLimit } from './rate-limiter';
 import { getSession } from './auth';
+import { createLogger } from './logger';
+
+const log = createLogger('api-utils');
 
 export async function withAuth(
   handler: () => Promise<NextResponse>,
   request?: Request,
 ): Promise<NextResponse> {
-  // Verify session
   const session = await getSession();
   if (!session) {
+    log.warn('Unauthenticated request blocked');
     return NextResponse.json(
       { error: { message: 'Authentication required' } },
       { status: 401 },
     );
   }
 
-  // Rate limiting
   const rateResult = await checkRateLimit(session);
   if (!rateResult.success) {
+    log.warn('Rate limit exceeded', { session });
     return NextResponse.json(
       { error: { message: 'Rate limit exceeded. Please try again later.' } },
       {
@@ -32,12 +35,14 @@ export async function withAuth(
     );
   }
 
-  const response = await handler();
-
-  // Attach rate limit headers
-  response.headers.set('X-RateLimit-Limit', String(rateResult.limit));
-  response.headers.set('X-RateLimit-Remaining', String(rateResult.remaining));
-  response.headers.set('X-RateLimit-Reset', String(rateResult.reset));
-
-  return response;
+  try {
+    const response = await handler();
+    response.headers.set('X-RateLimit-Limit', String(rateResult.limit));
+    response.headers.set('X-RateLimit-Remaining', String(rateResult.remaining));
+    response.headers.set('X-RateLimit-Reset', String(rateResult.reset));
+    return response;
+  } catch (err) {
+    log.error('Handler error', { error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined });
+    return NextResponse.json({ error: { message: 'Internal server error' } }, { status: 500 });
+  }
 }

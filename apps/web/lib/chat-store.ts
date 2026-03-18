@@ -1,4 +1,4 @@
-import { Redis } from '@upstash/redis';
+import { getRedis } from './redis';
 
 // ─── Types ───
 
@@ -18,14 +18,7 @@ export interface Conversation {
   updatedAt: number;
 }
 
-// ─── Redis helpers ───
-
-function getRedis(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url, token });
-}
+// ─── Key helpers ───
 
 const CONV_KEY = (id: string) => `conv:${id}`;
 const MSGS_KEY = (id: string) => `msgs:${id}`;
@@ -45,7 +38,6 @@ export async function createConversation(
   if (redis) {
     await redis.set(CONV_KEY(id), JSON.stringify(conv));
     await redis.lpush(USER_LIST_KEY(userId), id);
-    // Cap at 100 conversations per user
     await redis.ltrim(USER_LIST_KEY(userId), 0, 99);
   }
 
@@ -56,25 +48,28 @@ export async function listConversations(userId: string): Promise<Conversation[]>
   const redis = getRedis();
   if (!redis) return [];
 
-  const ids = await redis.lrange<string>(USER_LIST_KEY(userId), 0, 49);
+  const ids = await redis.lrange(USER_LIST_KEY(userId), 0, 49);
   if (!ids || ids.length === 0) return [];
 
   const pipeline = redis.pipeline();
   for (const id of ids) pipeline.get(CONV_KEY(id));
-  const results = await pipeline.exec<(string | null)[]>();
+  const results = await pipeline.exec();
 
-  return results
-    .filter((r): r is string => r !== null)
-    .map((r) => (typeof r === 'string' ? JSON.parse(r) : r) as Conversation)
+  return (results ?? [])
+    .map(([err, val]) => {
+      if (err || !val) return null;
+      return typeof val === 'string' ? JSON.parse(val) : null;
+    })
+    .filter((c): c is Conversation => c !== null)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getConversation(id: string): Promise<Conversation | null> {
   const redis = getRedis();
   if (!redis) return null;
-  const raw = await redis.get<string>(CONV_KEY(id));
+  const raw = await redis.get(CONV_KEY(id));
   if (!raw) return null;
-  return typeof raw === 'string' ? JSON.parse(raw) : (raw as unknown as Conversation);
+  return JSON.parse(raw) as Conversation;
 }
 
 export async function deleteConversation(
@@ -109,7 +104,6 @@ export async function saveMessages(
   const redis = getRedis();
   if (!redis) return;
   await redis.set(MSGS_KEY(conversationId), JSON.stringify(messages));
-  // Also bump conversation updatedAt
   const conv = await getConversation(conversationId);
   if (conv) {
     conv.updatedAt = Date.now();
@@ -120,7 +114,7 @@ export async function saveMessages(
 export async function getMessages(conversationId: string): Promise<StoredMessage[]> {
   const redis = getRedis();
   if (!redis) return [];
-  const raw = await redis.get<string>(MSGS_KEY(conversationId));
+  const raw = await redis.get(MSGS_KEY(conversationId));
   if (!raw) return [];
-  return typeof raw === 'string' ? JSON.parse(raw) : (raw as unknown as StoredMessage[]);
+  return JSON.parse(raw) as StoredMessage[];
 }
