@@ -1,4 +1,4 @@
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { gateway } from '@ai-sdk/gateway';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { getSDK } from '@/lib/sdk';
 import { createAllTools, systemPrompt } from '@proposales/ai';
@@ -8,18 +8,6 @@ import { saveMessages, type StoredMessage } from '@/lib/chat-store';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('ai:chat');
-
-// Create gateway per-request so the OIDC token (which rotates) is always fresh
-function getGateway() {
-  return createOpenAICompatible({
-    name: 'vercel-ai-gateway',
-    apiKey: process.env.OPENAI_API_KEY,       // vck_ connection key
-    baseURL: 'https://ai-gateway.vercel.sh/v1',
-    headers: process.env.VERCEL_OIDC_TOKEN
-      ? { 'X-Vercel-OIDC-Token': process.env.VERCEL_OIDC_TOKEN }
-      : {},
-  });
-}
 
 export const maxDuration = 60;
 
@@ -52,7 +40,7 @@ export async function POST(request: Request) {
     const messages = await convertToModelMessages(uiMessages);
 
     const result = streamText({
-      model: getGateway()(process.env.AI_MODEL || 'openai/gpt-4o'),
+      model: gateway(process.env.AI_MODEL || 'openai/gpt-4o'),
       system: systemPrompt,
       messages,
       tools,
