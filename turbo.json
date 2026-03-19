@@ -16,7 +16,9 @@
         "ALLOWED_EMAILS",
         "ALLOWED_DOMAINS",
         "REDIS_URL",
-        "OPENAI_API_KEY"
+        "OPENAI_API_KEY",
+        "AI_MODEL",
+        "AI_GATEWAY_API_KEY"
       ]
     },
     "dev": {
