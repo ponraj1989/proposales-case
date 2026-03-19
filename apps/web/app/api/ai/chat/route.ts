@@ -1,5 +1,4 @@
-import { gateway } from '@ai-sdk/gateway';
-import { streamText, stepCountIs, convertToModelMessages } from 'ai';
+import { gateway, streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { getSDK } from '@/lib/sdk';
 import { createAllTools, systemPrompt } from '@proposales/ai';
 import { getSession } from '@/lib/auth';
