@@ -8,7 +8,7 @@ export function createSearchProposalsTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Search for proposals by filtering on data properties. Use this when the user asks about existing proposals, wants to find proposals, or needs data for analysis.',
-    parameters: z.object({
+    inputSchema: z.object({
       filters: z
         .record(z.string())
         .optional()
@@ -31,7 +31,7 @@ export function createGetProposalTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Get full details of a specific proposal by its UUID. Use when the user wants to review, analyze, or get details about a specific proposal.',
-    parameters: z.object({
+    inputSchema: z.object({
       uuid: z.string().describe('The UUID of the proposal to retrieve'),
     }),
     execute: async ({ uuid }) => {
@@ -45,7 +45,7 @@ export function createCreateProposalTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Create a new proposal in the Proposales system. ONLY call this AFTER the user has accepted a draft (e.g. clicked Accept or said they approve). Never call this without prior user approval.',
-    parameters: z.object({
+    inputSchema: z.object({
       company_id: z.number().describe('The company ID the proposal belongs to'),
       language: z.string().length(2).describe('Two-letter language code (e.g., "en", "sv")'),
       title_md: z.string().optional().describe('Proposal title in markdown'),
@@ -80,7 +80,7 @@ export function createPatchProposalTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Update metadata on an existing proposal. Use when the user wants to modify proposal data fields.',
-    parameters: z.object({
+    inputSchema: z.object({
       uuid: z.string().describe('The UUID of the proposal to update'),
       data: z.record(z.unknown()).describe('The data fields to update'),
     }),
@@ -109,7 +109,7 @@ export function createGenerateProposalDraftTool() {
   return tool({
     description:
       'Generate a structured proposal draft for user review. The UI renders this as an interactive card with Accept/Reject buttons. Call this after gathering all requirements from the user. Do NOT call createProposal yet — wait for the user to accept.',
-    parameters: z.object({
+    inputSchema: z.object({
       title: z.string().describe('Proposal title'),
       description: z
         .string()
@@ -160,7 +160,7 @@ export function createReviseProposalPricingTool() {
   return tool({
     description:
       'Revise a proposal draft with an autonomous discount for negotiation. Call this when the user rejects a draft and wants to negotiate. Automatically applies an appropriate discount based on the negotiation round. Returns a revised draft card.',
-    parameters: z.object({
+    inputSchema: z.object({
       title: z.string().describe('Proposal title (from previous draft)'),
       description: z.string().describe('Proposal description'),
       items: z

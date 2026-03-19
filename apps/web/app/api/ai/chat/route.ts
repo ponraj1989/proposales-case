@@ -1,5 +1,5 @@
-import { createOpenAI } from '@ai-sdk/openai';
-import { streamText } from 'ai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { getSDK } from '@/lib/sdk';
 import { createAllTools, systemPrompt } from '@proposales/ai';
 import { getSession } from '@/lib/auth';
@@ -9,9 +9,10 @@ import { createLogger } from '@/lib/logger';
 
 const log = createLogger('ai:chat');
 
-const openai = createOpenAI({
+const gateway = createOpenAICompatible({
+  name: 'openai',
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: 'https://api.vercel.ai/v1',
+  baseURL: 'https://ai-gateway.vercel.sh/v1',
 });
 
 export const maxDuration = 60;
@@ -36,18 +37,20 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { messages, conversationId } = await request.json();
-    log.info('AI chat request', { conversationId, messageCount: messages?.length });
+    const { messages: uiMessages, conversationId } = await request.json();
+    log.info('AI chat request', { conversationId, messageCount: uiMessages?.length });
 
     const sdk = getSDK();
     const tools = createAllTools(sdk);
 
+    const messages = await convertToModelMessages(uiMessages);
+
     const result = streamText({
-      model: openai('openai/gpt-5.2'),
+      model: gateway(process.env.AI_MODEL || 'openai/gpt-5.2'),
       system: systemPrompt,
       messages,
       tools,
-      maxSteps: 10,
+      stopWhen: stepCountIs(15),
       onError({ error }) {
         log.error('Stream error from AI provider', {
           conversationId,
@@ -55,23 +58,23 @@ export async function POST(request: Request) {
           stack: error instanceof Error ? error.stack : undefined,
         });
       },
-      async onFinish({ response }) {
-        log.info('AI chat completed', { conversationId, responseMessages: response.messages.length });
+      async onFinish({ text, steps }) {
+        log.info('AI chat completed', { conversationId, steps: steps.length });
         if (conversationId) {
           try {
             const allMessages: StoredMessage[] = [
-              ...messages.map((m: { id?: string; role: string; content: string }) => ({
+              ...uiMessages.map((m: { id?: string; role: string; parts?: { type: string; text?: string }[]; content?: string }) => ({
                 id: m.id ?? crypto.randomUUID(),
                 role: m.role,
-                content: m.content,
+                content: m.parts?.filter((p: { type: string }) => p.type === 'text').map((p: { text?: string }) => p.text).join('') ?? m.content ?? '',
                 createdAt: Date.now(),
               })),
-              ...response.messages.map((m) => ({
-                id: m.id ?? crypto.randomUUID(),
-                role: m.role,
-                content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: text,
                 createdAt: Date.now(),
-              })),
+              },
             ];
             await saveMessages(conversationId, allMessages);
             log.debug('Messages saved to Redis', { conversationId });
@@ -82,13 +85,7 @@ export async function POST(request: Request) {
       },
     });
 
-    return result.toDataStreamResponse({
-      getErrorMessage: (error) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.error('Stream response error', { conversationId, error: msg });
-        return msg;
-      },
-    });
+    return result.toUIMessageStreamResponse();
   } catch (err) {
     log.error('AI chat error', {
       error: err instanceof Error ? err.message : String(err),

@@ -14,15 +14,15 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "ai": "^4.1.0",
-    "@ai-sdk/openai": "^1.1.0",
+    "@ai-sdk/openai": "^3.0.41",
+    "ai": "^6.0.116",
     "zod": "^3.23.0"
   },
   "peerDependencies": {
     "@proposales/api-client": "*"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@proposales/api-client": "*"
+    "@proposales/api-client": "*",
+    "typescript": "^5.7.0"
   }
 }

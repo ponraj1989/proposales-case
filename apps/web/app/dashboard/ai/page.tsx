@@ -1,11 +1,22 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useChat, type Message } from '@ai-sdk/react';
+import { useChat } from '@ai-sdk/react';
+import { type UIMessage, DefaultChatTransport } from 'ai';
 import { Button, cn } from '@proposales/ui';
 import { ChartCard, type ChartConfig } from '@/components/chat/ChartCard';
 
 // ─── Types ───
+
+interface ToolPart {
+  type: string;
+  toolName: string;
+  toolCallId: string;
+  state: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+}
 
 interface ProposalDraft {
   type: 'proposal_draft';
@@ -38,7 +49,7 @@ interface StoredConversation {
   title: string;
   createdAt: number;
   updatedAt: number;
-  messages: Message[];
+  messages: UIMessage[];
 }
 
 // ─── LocalStorage helpers ───
@@ -60,7 +71,7 @@ function persistConversations(conversations: StoredConversation[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
 }
 
-function persistConversation(id: string, title: string, messages: Message[]) {
+function persistConversation(id: string, title: string, messages: UIMessage[]) {
   const convs = loadConversations();
   const idx = convs.findIndex((c) => c.id === id);
   const now = Date.now();
@@ -99,6 +110,7 @@ export default function AIAssistantPage() {
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [input, setInput] = useState('');
 
   // Initialize conversations from localStorage
   useEffect(() => {
@@ -116,18 +128,16 @@ export default function AIAssistantPage() {
 
   const {
     messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-    setInput,
-    append,
+    sendMessage,
+    status,
     setMessages,
   } = useChat({
     id: activeConvId,
-    api: '/api/ai/chat',
-    body: { conversationId: activeConvId },
-    initialMessages: activeConversation?.messages ?? [],
+    transport: new DefaultChatTransport({
+      api: '/api/ai/chat',
+      body: { conversationId: activeConvId },
+    }),
+    messages: activeConversation?.messages ?? [],
     onFinish() {
       setTimeout(() => {
         setConversations(loadConversations());
@@ -135,26 +145,38 @@ export default function AIAssistantPage() {
     },
   });
 
-  // Save messages whenever they change
+  const isLoading = status === 'streaming' || status === 'submitted';
+
+  // Save messages when they change — debounced and only after streaming completes
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (activeConvId && messages.length > 0) {
+      // Always persist to localStorage immediately
       const title = generateTitle(messages);
       persistConversation(activeConvId, title, messages);
-      fetch(`/api/ai/conversations/${activeConvId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          messages: messages.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            createdAt: Date.now(),
-          })),
-        }),
-      }).catch(() => {});
+
+      // Debounce the server PUT to avoid spamming during streaming
+      clearTimeout(saveTimerRef.current);
+      if (!isLoading) {
+        saveTimerRef.current = setTimeout(() => {
+          fetch(`/api/ai/conversations/${activeConvId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title,
+              messages: messages.map((m) => ({
+                id: m.id,
+                role: m.role,
+                content: getMessageText(m),
+                createdAt: Date.now(),
+              })),
+            }),
+          }).catch(() => {});
+        }, 500);
+      }
     }
-  }, [messages, activeConvId]);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [messages, activeConvId, isLoading]);
 
   // Auto-scroll
   useEffect(() => {
@@ -206,16 +228,16 @@ export default function AIAssistantPage() {
   }
 
   const handleAccept = useCallback(() => {
-    append({ role: 'user', content: '[ACTION:ACCEPT_PROPOSAL]' });
-  }, [append]);
+    sendMessage({ text: '[ACTION:ACCEPT_PROPOSAL]' });
+  }, [sendMessage]);
 
   const handleReject = useCallback(() => {
-    append({ role: 'user', content: '[ACTION:REJECT_PROPOSAL]' });
-  }, [append]);
+    sendMessage({ text: '[ACTION:REJECT_PROPOSAL]' });
+  }, [sendMessage]);
 
   const handleNegotiate = useCallback(() => {
-    append({ role: 'user', content: '[ACTION:NEGOTIATE]' });
-  }, [append]);
+    sendMessage({ text: '[ACTION:NEGOTIATE]' });
+  }, [sendMessage]);
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">
@@ -321,10 +343,10 @@ export default function AIAssistantPage() {
 
         {/* Input */}
         <div className="border-t border-gray-200 bg-white px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex items-center gap-3">
+          <form onSubmit={(e) => { e.preventDefault(); if (input.trim()) { sendMessage({ text: input }); setInput(''); } }} className="flex items-center gap-3">
             <input
               value={input}
-              onChange={handleInputChange}
+              onChange={(e) => setInput(e.target.value)}
               placeholder="Ask anything — create proposals, visualize data, analyze pipeline..."
               className="flex-1 h-11 rounded-xl border border-gray-300 bg-white px-4 text-sm transition-colors placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               disabled={isLoading}
@@ -387,18 +409,54 @@ function ChatMessage({
   onNegotiate,
   isLoading,
 }: {
-  message: Message;
+  message: UIMessage;
   onAccept: () => void;
   onReject: () => void;
   onNegotiate: () => void;
   isLoading: boolean;
 }) {
+  const text = getMessageText(message);
+
+  // DEBUG: log actual parts structure to browser console
+  if (message.role === 'assistant') {
+    console.log('[DEBUG parts]', message.parts.map(p => ({
+      type: p.type,
+      keys: Object.keys(p),
+      ...(('toolInvocation' in p) ? { toolInvState: (p as any).toolInvocation?.state, toolInvName: (p as any).toolInvocation?.toolName } : {}),
+      ...(('state' in p) ? { state: (p as any).state } : {}),
+      ...(('output' in p) ? { outputType: typeof (p as any).output === 'object' ? (p as any).output?.type : undefined } : {}),
+    })));
+  }
+
+  // Extract tool parts — handle both flat DynamicToolUIPart and nested ToolInvocation formats
+  const toolParts: ToolPart[] = [];
+  for (const p of message.parts) {
+    if (p.type === 'dynamic-tool') {
+      // Flat structure: { type, toolName, toolCallId, state, output }
+      toolParts.push(p as unknown as ToolPart);
+    } else if (p.type.startsWith('tool-')) {
+      // Named tool: { type: 'tool-<name>', toolCallId, state, output }
+      toolParts.push(p as unknown as ToolPart);
+    } else if (p.type === 'tool-invocation' && 'toolInvocation' in p) {
+      // Nested structure: { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, state, result } }
+      const inv = (p as any).toolInvocation;
+      toolParts.push({
+        type: p.type,
+        toolName: inv.toolName ?? '',
+        toolCallId: inv.toolCallId ?? '',
+        state: inv.state === 'result' ? 'output-available' : inv.state,
+        input: inv.args,
+        output: inv.result,
+      });
+    }
+  }
+
   // Hide action messages — show a pill label instead
-  if (message.role === 'user' && message.content.startsWith('[ACTION:')) {
+  if (message.role === 'user' && text.startsWith('[ACTION:')) {
     const label =
-      message.content === '[ACTION:ACCEPT_PROPOSAL]'
+      text === '[ACTION:ACCEPT_PROPOSAL]'
         ? 'Accepted the proposal'
-        : message.content === '[ACTION:REJECT_PROPOSAL]'
+        : text === '[ACTION:REJECT_PROPOSAL]'
           ? 'Rejected the proposal'
           : 'Requested negotiation';
     return (
@@ -410,22 +468,16 @@ function ChatMessage({
     );
   }
 
-  // Extract proposal drafts and charts from tool invocations
+  // Extract proposal drafts and charts from tool parts
   const proposalDrafts: ProposalDraft[] = [];
   const charts: ChartConfig[] = [];
-  if (message.toolInvocations) {
-    for (const invocation of message.toolInvocations) {
-      if (
-        'result' in invocation &&
-        invocation.result &&
-        typeof invocation.result === 'object'
-      ) {
-        const result = invocation.result as Record<string, unknown>;
-        if (result.type === 'proposal_draft') {
-          proposalDrafts.push(result as unknown as ProposalDraft);
-        } else if (result.type === 'chart') {
-          charts.push(result as unknown as ChartConfig);
-        }
+  for (const part of toolParts) {
+    if (part.state === 'output-available' && part.output && typeof part.output === 'object') {
+      const result = part.output as Record<string, unknown>;
+      if (result.type === 'proposal_draft') {
+        proposalDrafts.push(result as unknown as ProposalDraft);
+      } else if (result.type === 'chart') {
+        charts.push(result as unknown as ChartConfig);
       }
     }
   }
@@ -466,7 +518,7 @@ function ChatMessage({
         ))}
 
         {/* Text content */}
-        {message.content && (
+        {text && (
           <div
             className={cn(
               'rounded-2xl px-4 py-3 text-sm',
@@ -478,37 +530,34 @@ function ChatMessage({
             {message.role === 'assistant' ? (
               <div
                 className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-p:text-gray-700 prose-strong:text-gray-900 prose-code:text-brand-600 prose-code:bg-brand-50 prose-code:rounded prose-code:px-1"
-                dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
+                dangerouslySetInnerHTML={{ __html: formatMarkdown(text) }}
               />
             ) : (
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <p className="whitespace-pre-wrap">{text}</p>
             )}
           </div>
         )}
 
         {/* Tool invocation indicators (non-draft, non-chart tools) */}
-        {message.toolInvocations &&
-          message.toolInvocations.filter(
-            (t) =>
-              !('result' in t &&
-                t.result &&
-                typeof t.result === 'object' &&
-                ((t.result as Record<string, unknown>).type === 'proposal_draft' ||
-                 (t.result as Record<string, unknown>).type === 'chart')),
-          ).length > 0 && (
-            <div className="space-y-1">
-              {message.toolInvocations
-                .filter(
-                  (t) =>
-                    !('result' in t &&
-                      t.result &&
-                      typeof t.result === 'object' &&
-                      ((t.result as Record<string, unknown>).type === 'proposal_draft' ||
-                       (t.result as Record<string, unknown>).type === 'chart')),
-                )
-                .map((t) => (
-                  <div key={t.toolCallId} className="flex items-center gap-2 text-xs text-gray-400">
-                    {'result' in t ? (
+        {toolParts.filter(
+          (t) => !(t.state === 'output-available' &&
+              t.output &&
+              typeof t.output === 'object' &&
+              (((t.output as Record<string, unknown>).type === 'proposal_draft') ||
+               ((t.output as Record<string, unknown>).type === 'chart'))),
+        ).length > 0 ? (
+          <div className="space-y-1">
+            {toolParts
+              .filter((t) => !(t.state === 'output-available' &&
+                  t.output &&
+                  typeof t.output === 'object' &&
+                  (((t.output as Record<string, unknown>).type === 'proposal_draft') ||
+                   ((t.output as Record<string, unknown>).type === 'chart'))))
+              .map((t, i) => {
+                const toolName = t.toolName || 'tool';
+                return (
+                  <div key={t.toolCallId || i} className="flex items-center gap-2 text-xs text-gray-400">
+                    {t.state === 'output-available' ? (
                       <svg className="h-3 w-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                       </svg>
@@ -518,11 +567,12 @@ function ChatMessage({
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
                     )}
-                    <span>{formatToolName(t.toolName)}</span>
+                    <span>{formatToolName(toolName)}</span>
                   </div>
-                ))}
-            </div>
-          )}
+                );
+              })}
+          </div>
+        ) : null}
       </div>
 
       {message.role === 'user' && (
@@ -710,10 +760,17 @@ function TypingIndicator() {
 
 // ─── Helpers ───
 
-function generateTitle(messages: Message[]): string {
-  const firstUserMsg = messages.find((m) => m.role === 'user' && !m.content.startsWith('[ACTION:'));
+function getMessageText(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .map((p) => p.text)
+    .join('');
+}
+
+function generateTitle(messages: UIMessage[]): string {
+  const firstUserMsg = messages.find((m) => m.role === 'user' && !getMessageText(m).startsWith('[ACTION:'));
   if (!firstUserMsg) return 'New Chat';
-  const text = firstUserMsg.content;
+  const text = getMessageText(firstUserMsg);
   return text.length > 50 ? text.slice(0, 50) + '\u2026' : text;
 }
 

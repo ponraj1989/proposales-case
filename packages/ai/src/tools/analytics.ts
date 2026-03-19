@@ -6,7 +6,7 @@ export function createAnalyzePortfolioTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Analyze the proposal portfolio to provide sales insights. Fetches proposals, content, and company data to generate analytics. Use when the user asks about performance, trends, win rates, or wants improvement suggestions.',
-    parameters: z.object({
+    inputSchema: z.object({
       analysis_type: z
         .enum([
           'win_rate',
@@ -67,7 +67,7 @@ export function createRenderChartTool() {
 Supports: bar, stacked_bar, line, area, pie, donut, radar, composed (mixed bar+line), funnel, heatmap.
 For multi-series data supply a "series" array describing each series key. For single-series you can omit series and just use x_key/y_key.
 Use this whenever the user asks to visualize data, compare metrics, show trends, see distributions, or create a chart/graph of any kind.`,
-    parameters: z.object({
+    inputSchema: z.object({
       chart_type: z
         .enum([
           'bar',
@@ -133,7 +133,7 @@ export function createQueryProposalDataTool(sdk: ProposalesSDK) {
 Fetches real proposals from the Proposales API and transforms them into chart-ready datasets.
 Use BEFORE renderChart when the user asks to visualize proposal data (e.g. "show revenue by month", "compare proposals by status", "what's the trend of accepted proposals").
 Returns structured data that should be passed directly to renderChart.`,
-    parameters: z.object({
+    inputSchema: z.object({
       query_type: z
         .enum([
           'status_distribution',
@@ -341,7 +341,7 @@ export function createSuggestPricingTool(sdk: ProposalesSDK) {
   return tool({
     description:
       'Analyze pricing and suggest adjustments. Compares a proposal against historical data to recommend pricing changes. Use when the user wants to negotiate price or optimize a deal.',
-    parameters: z.object({
+    inputSchema: z.object({
       proposal_uuid: z.string().describe('UUID of the proposal to analyze'),
       requested_discount_percent: z
         .number()
