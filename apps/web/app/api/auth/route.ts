@@ -1,36 +1,29 @@
 import { NextResponse } from 'next/server';
-import { createSession, clearSession } from '@/lib/auth';
-import { createLogger } from '@/lib/logger';
-
-const log = createLogger('api:auth');
+import { createPasskeySession, clearSession } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const apiKey = body.key ?? body.apiKey;
+    const passkey = body.key ?? body.apiKey ?? body.passkey;
 
-    if (!apiKey || typeof apiKey !== 'string') {
-      log.warn('Login attempt without API key');
+    if (!passkey || typeof passkey !== 'string') {
       return NextResponse.json(
-        { error: { message: 'API key is required' } },
+        { error: { message: 'Passkey is required' } },
         { status: 400 },
       );
     }
 
-    const success = await createSession(apiKey);
+    const result = await createPasskeySession(passkey);
 
-    if (!success) {
-      log.warn('Failed login attempt — invalid API key');
+    if (!result.success) {
       return NextResponse.json(
-        { error: { message: 'Invalid API key' } },
+        { error: { message: result.error || 'Invalid passkey' } },
         { status: 401 },
       );
     }
 
-    log.info('Successful API key login');
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, role: result.role });
   } catch (err) {
-    log.error('Auth route error', { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json(
       { error: { message: 'Internal server error' } },
       { status: 500 },
@@ -39,7 +32,6 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  log.info('Session cleared');
   await clearSession();
   return NextResponse.json({ success: true });
 }

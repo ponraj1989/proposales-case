@@ -18,7 +18,15 @@
         "REDIS_URL",
         "OPENAI_API_KEY",
         "AI_MODEL",
-        "AI_GATEWAY_API_KEY"
+        "AI_GATEWAY_API_KEY",
+        "USER_PASSKEY_1",
+        "USER_PASSKEY_2",
+        "USER_PASSKEY_3",
+        "USER_PASSKEY_4",
+        "USER_PASSKEY_5",
+        "SALES_PASSKEY_1",
+        "SALES_EMAILS",
+        "MONGODB_URI"
       ]
     },
     "dev": {

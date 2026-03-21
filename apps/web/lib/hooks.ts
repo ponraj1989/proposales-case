@@ -11,6 +11,26 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
+// ─── User / Role ───
+export interface UserInfo {
+  authenticated: boolean;
+  role: 'customer' | 'sales';
+  userId: string | null;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+}
+
+export function useUser() {
+  return useSWR<UserInfo>('/api/auth/me', fetcher, {
+    dedupingInterval: 60000,      // dedupe calls within 1 minute
+    revalidateOnFocus: false,     // don't re-fetch when tab regains focus
+    revalidateOnReconnect: false, // don't re-fetch on network reconnect
+  });
+}
+
+// ─── Proposales API hooks ───
+
 export function useProposals(search?: Record<string, string>) {
   const params = new URLSearchParams(search ?? {});
   return useSWR(`/api/proposales/proposals?${params}`, fetcher);
@@ -74,3 +94,49 @@ export async function apiDelete(url: string) {
   }
   return res.json();
 }
+
+// ─── Email Logs ───
+
+export interface EmailLogEntry {
+  _id: string;
+  proposalUuid: string;
+  to: string;
+  recipientName: string;
+  subject: string;
+  type: 'esign' | 'proposal' | 'reminder' | 'follow_up';
+  status: 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+  sentAt: string;
+  openedAt?: string;
+  clickedAt?: string;
+  sentBy?: string;
+}
+
+export function useEmailLogs(proposalUuid?: string) {
+  const url = proposalUuid
+    ? `/api/email-logs?proposal_uuid=${proposalUuid}`
+    : '/api/email-logs';
+  return useSWR<{ data: EmailLogEntry[] }>(url, fetcher, {
+    revalidateOnFocus: false,
+    dedupingInterval: 30000,
+  });
+}
+
+// ─── Activity Feed ───
+
+export interface ActivityFeedEvent {
+  id: string;
+  type: 'viewed' | 'signed' | 'commented' | 'created' | 'sent' | 'expired' | 'updated';
+  title: string;
+  description: string;
+  time: string;
+  proposalUuid?: string;
+}
+
+export function useActivityFeed(enabled = true) {
+  return useSWR<{ data: ActivityFeedEvent[] }>(enabled ? '/api/activity-feed' : null, fetcher, {
+    revalidateOnFocus: true,
+    refreshInterval: 10000,
+    dedupingInterval: 5000,
+  });
+}
+

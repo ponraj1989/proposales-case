@@ -133,7 +133,7 @@ export default function AnalyticsPage() {
     const statusCounts: Record<string, number> = {};
     let totalValue = 0;
     let acceptedValue = 0;
-    let currency = 'USD';
+    let currency = 'EUR';
     const monthlyData: Record<string, { count: number; value: number }> = {};
 
     for (const p of proposals) {
@@ -222,7 +222,7 @@ export default function AnalyticsPage() {
             className={cn(
               'rounded-md px-4 py-2 text-sm font-medium transition-colors',
               tab === t.key
-                ? 'bg-brand-500 text-white'
+                ? 'bg-gray-900 text-white'
                 : 'text-gray-600 hover:bg-gray-100',
             )}
           >
@@ -445,11 +445,11 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
                 )}
-                <div className="flex gap-3 rounded-lg border border-brand-200 bg-brand-50 p-4">
-                  <span className="text-brand-500">💡</span>
+                <div className="flex gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <span className="text-gray-700">💡</span>
                   <div>
-                    <p className="text-sm font-medium text-brand-800">Use AI for Deeper Insights</p>
-                    <p className="text-xs text-brand-600">Ask the AI Assistant for detailed analysis, pricing optimization, and improvement recommendations.</p>
+                    <p className="text-sm font-medium text-gray-800">Use AI for Deeper Insights</p>
+                    <p className="text-xs text-gray-600">Ask the AI Assistant for detailed analysis, pricing optimization, and improvement recommendations.</p>
                   </div>
                 </div>
               </div>

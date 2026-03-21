@@ -66,7 +66,7 @@ export default function CompaniesPage() {
             href={item.website_url as string}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-brand-500 hover:underline truncate block max-w-[180px]"
+            className="text-sm text-gray-700 hover:underline truncate block max-w-[180px]"
           >
             {(item.website_url as string).replace(/^https?:\/\//, '')}
           </a>

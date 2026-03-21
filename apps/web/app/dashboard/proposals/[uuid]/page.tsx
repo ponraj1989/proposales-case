@@ -29,6 +29,7 @@ export default function ProposalDetailPage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
+  const [generatingDesc, setGeneratingDesc] = useState(false);
 
   const proposal = data?.data as Record<string, unknown> | undefined;
 
@@ -75,6 +76,30 @@ export default function ProposalDetailPage() {
       mutate();
     } catch {
       // TODO: toast
+    }
+  }
+
+  async function handleGenerateDescription() {
+    setGeneratingDesc(true);
+    try {
+      const res = await fetch('/api/ai/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: formData.title_md,
+          context: formData.contact_name
+            ? `Client: ${formData.contact_name}, Company: ${formData.recipient_company_name}`
+            : undefined,
+        }),
+      });
+      if (res.ok) {
+        const { description } = await res.json();
+        setFormData((prev) => ({ ...prev, description_md: description }));
+      }
+    } catch {
+      // TODO: toast
+    } finally {
+      setGeneratingDesc(false);
     }
   }
 
@@ -149,12 +174,25 @@ export default function ProposalDetailPage() {
                     value={formData.title_md}
                     onChange={(e) => setFormData({ ...formData, title_md: e.target.value })}
                   />
-                  <Textarea
-                    label="Description"
-                    value={formData.description_md}
-                    onChange={(e) => setFormData({ ...formData, description_md: e.target.value })}
-                    rows={4}
-                  />
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm font-medium text-gray-700">Description</label>
+                      <Button
+                        variant="secondary"
+                        onClick={handleGenerateDescription}
+                        loading={generatingDesc}
+                        className="text-xs"
+                      >
+                        ✨ AI Generate
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={formData.description_md}
+                      onChange={(e) => setFormData({ ...formData, description_md: e.target.value })}
+                      rows={6}
+                      placeholder={generatingDesc ? 'Generating hotel description...' : 'Enter proposal description or click AI Generate'}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -208,7 +246,7 @@ export default function ProposalDetailPage() {
                       <div className="text-right">
                         {block.unit_value_with_discount_with_tax != null ? (
                           <p className="text-sm font-medium tabular-nums">
-                            {formatCurrency(block.unit_value_with_discount_with_tax as number, (proposal.currency as string) || 'USD')}
+                            {formatCurrency(block.unit_value_with_discount_with_tax as number, (proposal.currency as string) || 'EUR')}
                           </p>
                         ) : null}
                         {block.quantity != null ? (
@@ -231,10 +269,10 @@ export default function ProposalDetailPage() {
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-500">Total Value</p>
                 <p className="mt-1 text-3xl font-bold text-gray-900">
-                  {formatCurrency((proposal.value_with_tax as number) || 0, (proposal.currency as string) || 'USD')}
+                  {formatCurrency((proposal.value_with_tax as number) || 0, (proposal.currency as string) || 'EUR')}
                 </p>
                 <p className="mt-1 text-xs text-gray-400">
-                  {formatCurrency((proposal.value_without_tax as number) || 0, (proposal.currency as string) || 'USD')} excl. tax
+                  {formatCurrency((proposal.value_without_tax as number) || 0, (proposal.currency as string) || 'EUR')} excl. tax
                 </p>
               </div>
             </CardContent>
@@ -344,7 +382,7 @@ export default function ProposalDetailPage() {
               key={st}
               onClick={() => handleStatusChange(st)}
               disabled={proposal.status === st}
-              className="rounded-lg border border-gray-200 p-3 text-center text-sm font-medium capitalize transition-colors hover:bg-brand-50 hover:border-brand-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded-lg border border-gray-200 p-3 text-center text-sm font-medium capitalize transition-colors hover:bg-gray-100 hover:border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {st}
             </button>

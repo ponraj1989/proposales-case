@@ -19,3 +19,29 @@ export {
   createQueryProposalDataTool,
   createSuggestPricingTool,
 } from './analytics';
+
+export {
+  createExtractEventDetailsTool,
+  createAcceptProposalTool,
+  createRequestUserInputTool,
+  type SendEsignEmailFn,
+} from './customer';
+
+export {
+  createCheckAvailabilityTool,
+  createCalculateEventPriceTool,
+  createGetMonthAvailabilityTool,
+  createSuggestFloorPlanTool,
+  checkAvailability,
+  bookSpace,
+  holdSpace,
+  confirmHold,
+  releaseHold,
+  isSlotAvailable,
+  getActiveHolds,
+  getVenue,
+  getSpaces,
+  getTimeSlots,
+  type HoldEntry,
+  type PmsService,
+} from './pms';

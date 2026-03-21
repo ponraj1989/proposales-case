@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import type { ProposalesSDK } from '@proposales/api-client';
+import type { ProposalesSDK, Proposal } from '@proposales/api-client';
+import { holdSpace, confirmHold, releaseHold } from './pms';
 
 // ─── Existing tools ───
 
@@ -91,24 +92,25 @@ export function createPatchProposalTool(sdk: ProposalesSDK) {
   });
 }
 
+// ─── Helpers ───
+
+/** Build public e-sign URL from proposal UUID */
+function toEsignUrl(uuid: string | null | undefined): string | null {
+  if (!uuid) return null;
+  return `https://esign.proposales.com/v/${uuid}`;
+}
+
 // ─── New workflow tools ───
 
 const draftItemSchema = z.object({
-  name: z.string().describe('Item / service name'),
-  description: z.string().describe('Brief description'),
-  quantity: z.number().min(1).describe('Quantity'),
-  unit_price: z.number().min(0).describe('Price per unit in dollars (not cents)'),
-  total: z.number().min(0).describe('quantity × unit_price'),
-  content_id: z
-    .number()
-    .optional()
-    .describe('Matching content/variation ID from the content library, if available'),
+  content_id: z.number().describe('The variation_id of the content item from the Proposales content library. MUST be a valid ID from listContent.'),
+  quantity: z.number().min(1).default(1).describe('Quantity of this item'),
 });
 
-export function createGenerateProposalDraftTool() {
+export function createGenerateProposalDraftTool(sdk?: ProposalesSDK, userInfo?: { email?: string; name?: string }) {
   return tool({
     description:
-      'Generate a structured proposal draft for user review. The UI renders this as an interactive card with Accept/Reject buttons. Call this after gathering all requirements from the user. Do NOT call createProposal yet — wait for the user to accept.',
+      'Generate a structured proposal draft for user review by creating it in the Proposales system. The UI renders this as an interactive card with Accept/Reject buttons. Call this after gathering all requirements. You MUST call listContent first to get available items and use their variation_id as content_id. NEVER invent prices — prices come from the Proposales API. IMPORTANT: If a specific space and date were selected via checkAvailability, you MUST pass space_id, event_date, and time_slot_id — this will hold the space for 7 days while the proposal is pending.',
     inputSchema: z.object({
       title: z.string().describe('Proposal title'),
       description: z
@@ -117,7 +119,7 @@ export function createGenerateProposalDraftTool() {
       items: z
         .array(draftItemSchema)
         .min(1)
-        .describe('Line items with pricing'),
+        .describe('Content items from the Proposales content library. Each item must have a content_id (variation_id from listContent) and quantity.'),
       currency: z.string().default('USD').describe('Currency code'),
       recipient_name: z.string().describe('Recipient full name'),
       recipient_email: z.string().describe('Recipient email'),
@@ -125,48 +127,159 @@ export function createGenerateProposalDraftTool() {
       company_id: z.number().describe('Proposales company ID to create under'),
       language: z.string().length(2).default('en').describe('Language code'),
       notes: z.string().optional().describe('Additional notes or special requests'),
+      venue_type: z.enum(['room', 'boardroom', 'banquet', 'conference', 'garden', 'restaurant', 'pool']).optional()
+        .describe('Primary venue type for the proposal — used for dynamic header image'),
+      // Space booking fields — triggers a 7-day hold
+      space_id: z.string().optional().describe('Space ID from checkAvailability (e.g. space-grand-ballroom). If provided, the space will be held for 7 days.'),
+      event_date: z.string().optional().describe('Event date in YYYY-MM-DD format for the booking hold'),
+      time_slot_id: z.string().optional().describe('Time slot ID: morning, afternoon, evening, or full-day'),
+      guests: z.number().optional().describe('Number of guests for the event'),
     }),
     execute: async (input) => {
-      const subtotal = input.items.reduce((sum, item) => sum + item.total, 0);
-      const tax = Math.round(subtotal * 0.1 * 100) / 100; // 10% tax estimate
-      const total = Math.round((subtotal + tax) * 100) / 100;
+      const recipientEmail = userInfo?.email || input.recipient_email;
+      const nameParts = (input.recipient_name || '').split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      let proposalUuid: string | null = null;
+      let proposalUrl: string | null = null;
+
+      // Build blocks from content items
+      const blocks = input.items.map((item) => ({ content_id: item.content_id }));
+
+      // Defaults in case API call fails
+      let resolvedItems: { name: string; description: string; quantity: number; unit_price: number; total: number; content_id: number }[] = [];
+      let subtotal = 0;
+      let tax = 0;
+      let total = 0;
+
+      if (sdk) {
+        try {
+          // 1. Create the proposal with content blocks — Proposales applies real pricing
+          const apiResult = await sdk.proposals.create({
+            company_id: input.company_id,
+            language: input.language,
+            title_md: input.title,
+            description_md: input.description,
+            creator_email: userInfo?.email,
+            contact_email: recipientEmail,
+            recipient: {
+              first_name: firstName,
+              last_name: lastName,
+              email: recipientEmail,
+              company_name: input.recipient_company,
+            },
+            blocks,
+            data: {
+              venue_type: input.venue_type ?? null,
+              notes: input.notes ?? '',
+              status: 'draft',
+              negotiation_round: 0,
+              discount_applied: 0,
+            },
+          });
+
+          proposalUuid = apiResult?.proposal?.uuid ?? null;
+          proposalUrl = toEsignUrl(proposalUuid);
+
+          // 2. Fetch the created proposal to get real prices from blocks
+          if (proposalUuid) {
+            const fetchedResult = await sdk.proposals.get(proposalUuid);
+            const fetched: Proposal = fetchedResult.data;
+
+            if (fetched.blocks?.length) {
+              // Map API blocks back to items with real prices (API returns cents)
+              resolvedItems = fetched.blocks.map((block, idx) => {
+                const qty = input.items[idx]?.quantity ?? block.quantity ?? 1;
+                const unitPriceCents = block.unit_value_with_discount_with_tax ?? 0;
+                const unitPrice = unitPriceCents / 100;
+                return {
+                  name: block.title ?? `Item ${idx + 1}`,
+                  description: block.description ?? '',
+                  quantity: qty,
+                  unit_price: unitPrice,
+                  total: Math.round(unitPrice * qty * 100) / 100,
+                  content_id: input.items[idx]?.content_id,
+                };
+              });
+            }
+
+            // Use API totals (in cents → dollars)
+            const valueWithTax = fetched.value_with_tax ?? 0;
+            const valueWithoutTax = fetched.value_without_tax ?? 0;
+            subtotal = valueWithoutTax / 100;
+            tax = Math.round((valueWithTax - valueWithoutTax)) / 100;
+            total = valueWithTax / 100;
+          }
+        } catch (err) {
+          console.error('Failed to create draft proposal via API:', err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      // ─── Hold the space for 7 days if booking details are provided ───
+      let holdResult: { success: boolean; error?: string; expires_at?: string } | null = null;
+      if (input.space_id && input.event_date && input.time_slot_id && proposalUuid) {
+        const hold = holdSpace({
+          proposal_uuid: proposalUuid,
+          space_id: input.space_id,
+          date: input.event_date,
+          time_slot_id: input.time_slot_id,
+          guests: input.guests || 1,
+          event_type: input.venue_type || undefined,
+          contact_email: input.recipient_email,
+          contact_name: input.recipient_name,
+        });
+        holdResult = {
+          success: hold.success,
+          error: hold.error,
+          expires_at: hold.hold?.expires_at,
+        };
+      }
 
       return {
         type: 'proposal_draft' as const,
         title: input.title,
         description: input.description,
-        items: input.items,
+        items: resolvedItems,
         subtotal,
         tax,
         total,
         currency: input.currency,
         recipient: {
           name: input.recipient_name,
-          email: input.recipient_email,
+          email: recipientEmail || input.recipient_email,
           company: input.recipient_company ?? '',
         },
         company_id: input.company_id,
         language: input.language,
         notes: input.notes ?? '',
+        venue_type: input.venue_type ?? null,
         negotiation_round: 0,
         max_negotiation_rounds: 3,
         discount_applied: 0,
+        proposalUuid,
+        proposalUrl,
+        // Space hold info
+        space_hold: holdResult ?? undefined,
+        booking_details: (input.space_id && input.event_date) ? {
+          space_id: input.space_id,
+          event_date: input.event_date,
+          time_slot_id: input.time_slot_id,
+          guests: input.guests,
+        } : undefined,
       };
     },
   });
 }
 
-export function createReviseProposalPricingTool() {
+export function createReviseProposalPricingTool(sdk?: ProposalesSDK, userInfo?: { email?: string; name?: string }) {
   return tool({
     description:
-      'Revise a proposal draft with an autonomous discount for negotiation. Call this when the user rejects a draft and wants to negotiate. Automatically applies an appropriate discount based on the negotiation round. Returns a revised draft card.',
+      'Revise a proposal with a discount for negotiation. Call this when the user rejects a draft and wants to negotiate. Uses PATCH /v3/proposals/{uuid}/data to update the SAME proposal (no new proposal created). Fetches real base prices from the proposal blocks, applies the negotiation discount, and patches the proposal data with discount metadata.',
     inputSchema: z.object({
-      title: z.string().describe('Proposal title (from previous draft)'),
+      proposal_uuid: z.string().describe('UUID of the proposal to revise (from generateProposalDraft or prior revision — same UUID throughout negotiation)'),
+      title: z.string().describe('Proposal title (from the draft)'),
       description: z.string().describe('Proposal description'),
-      items: z
-        .array(draftItemSchema)
-        .min(1)
-        .describe('Original line items with ORIGINAL pricing (before any discount)'),
       currency: z.string().describe('Currency code'),
       recipient_name: z.string().describe('Recipient full name'),
       recipient_email: z.string().describe('Recipient email'),
@@ -179,6 +292,8 @@ export function createReviseProposalPricingTool() {
         .max(3)
         .describe('Current negotiation round (0 = initial, 1 = first counter, etc.)'),
       notes: z.string().optional(),
+      venue_type: z.enum(['room', 'boardroom', 'banquet', 'conference', 'garden', 'restaurant', 'pool']).optional()
+        .describe('Venue type from the original draft'),
     }),
     execute: async (input) => {
       const round = input.current_negotiation_round + 1;
@@ -186,25 +301,72 @@ export function createReviseProposalPricingTool() {
       // Determine discount based on round
       let discountPercent: number;
       if (round === 1) {
-        discountPercent = 7; // 5-8% range, pick 7
+        discountPercent = 7;
       } else if (round === 2) {
-        discountPercent = 12; // 10-15% range, pick 12
+        discountPercent = 12;
       } else {
-        discountPercent = 18; // up to 20%, pick 18 as "best and final"
+        discountPercent = 18;
       }
 
       const isFinalOffer = round >= 3;
       const multiplier = (100 - discountPercent) / 100;
 
-      const revisedItems = input.items.map((item) => ({
-        ...item,
-        unit_price: Math.round(item.unit_price * multiplier * 100) / 100,
-        total: Math.round(item.quantity * item.unit_price * multiplier * 100) / 100,
-      }));
+      const recipientEmail = userInfo?.email || input.recipient_email;
 
-      const subtotal = revisedItems.reduce((sum, item) => sum + item.total, 0);
-      const tax = Math.round(subtotal * 0.1 * 100) / 100;
-      const total = Math.round((subtotal + tax) * 100) / 100;
+      // Same UUID and URL throughout negotiation
+      const proposalUuid = input.proposal_uuid;
+      let proposalUrl: string | null = null;
+      let revisedItems: { name: string; description: string; quantity: number; unit_price: number; total: number; content_id: number }[] = [];
+      let subtotal = 0;
+      let tax = 0;
+      let total = 0;
+
+      if (sdk) {
+        try {
+          // 1. Fetch the existing proposal to get real base prices from blocks
+          const fetchedResult = await sdk.proposals.get(proposalUuid);
+          const fetched: Proposal = fetchedResult.data;
+
+          // Construct public e-sign URL from UUID
+          proposalUrl = toEsignUrl(proposalUuid);
+
+          // 2. Patch the proposal data with negotiation metadata
+          await sdk.proposals.patchData(proposalUuid, {
+            data: {
+              negotiation_round: round,
+              discount_applied: discountPercent,
+              is_final_offer: isFinalOffer,
+              status: 'negotiating',
+            },
+          });
+
+          // 3. Calculate discounted prices from the real block prices
+          if (fetched.blocks?.length) {
+            revisedItems = fetched.blocks.map((block) => {
+              const qty = block.quantity ?? 1;
+              const basePriceCents = block.unit_value_with_discount_with_tax ?? 0;
+              const discountedPrice = Math.round(basePriceCents * multiplier) / 100;
+              return {
+                name: block.title ?? 'Item',
+                description: block.description ?? '',
+                quantity: qty,
+                unit_price: discountedPrice,
+                total: Math.round(discountedPrice * qty * 100) / 100,
+                content_id: block.content_id ?? 0,
+              };
+            });
+          }
+
+          // Apply discount to API totals
+          const valueWithTax = fetched.value_with_tax ?? 0;
+          const valueWithoutTax = fetched.value_without_tax ?? 0;
+          subtotal = Math.round(valueWithoutTax * multiplier) / 100;
+          tax = Math.round((valueWithTax - valueWithoutTax) * multiplier) / 100;
+          total = Math.round(valueWithTax * multiplier) / 100;
+        } catch (err) {
+          console.error('Failed to revise proposal via API:', err instanceof Error ? err.message : String(err));
+        }
+      }
 
       return {
         type: 'proposal_draft' as const,
@@ -217,7 +379,7 @@ export function createReviseProposalPricingTool() {
         currency: input.currency,
         recipient: {
           name: input.recipient_name,
-          email: input.recipient_email,
+          email: recipientEmail || input.recipient_email,
           company: input.recipient_company ?? '',
         },
         company_id: input.company_id,
@@ -227,6 +389,8 @@ export function createReviseProposalPricingTool() {
         max_negotiation_rounds: 3,
         discount_applied: discountPercent,
         is_final_offer: isFinalOffer,
+        proposalUuid,
+        proposalUrl,
       };
     },
   });

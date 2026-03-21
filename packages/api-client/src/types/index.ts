@@ -90,20 +90,61 @@ export interface ProposalBlock {
   quantity_visible?: boolean;
 }
 
-export interface MultiProductRow {
-  date?: string;
-  quantity?: number;
-  unit_value_without_tax?: number;
-  unit_value_with_tax?: number;
+export interface MultiProductSubRow {
+  uuid: string;
   label?: string;
+  notes?: string;
+  quantity?: number;
+  unit?: string;
+  unitValueWithDiscountWithoutTax: number;
+  unitValueWithDiscountWithTax: number;
+  unitValueWithoutDiscountWithoutTax: number;
+  unitValueWithoutDiscountWithTax: number;
 }
 
-export interface PackageSplit {
-  items?: Array<{
-    tax_rate?: number;
-    value_without_tax?: number;
-  }>;
+export interface MultiProductRow {
+  uuid: string;
+  dateFrom?: string;
+  dateTo?: string;
+  discount?: number;
+  fixed_discount?: number;
+  packageInfo?: {
+    packageName?: string;
+    sourceRowUuid: string;
+  };
+  occupancy?: number;
+  label?: string;
+  notes?: string;
+  setup?: string;
+  quantity?: number;
+  unit?: string;
+  subrows?: MultiProductSubRow[];
+  unitValueWithDiscountWithoutTax: number;
+  unitValueWithDiscountWithTax: number;
+  unitValueWithoutDiscountWithoutTax: number;
+  unitValueWithoutDiscountWithTax: number;
+  _unitValueWasOverridden?: boolean;
+  compoundedValues?: {
+    unitValueWithDiscountWithoutTax: number;
+    unitValueWithDiscountWithTax: number;
+    unitValueWithoutDiscountWithoutTax: number;
+    unitValueWithoutDiscountWithTax: number;
+  };
 }
+
+export interface PackageSplitItem {
+  enable_discount?: boolean;
+  fixed?: boolean;
+  type: 'accommodation' | 'meetingRoom' | 'food' | 'other';
+  value_saved_with_tax?: boolean;
+  value_with_tax?: number;
+  value_without_tax?: number;
+  vat?: number;
+  /** @deprecated Use value_without_tax instead */
+  value?: number;
+}
+
+export type PackageSplit = PackageSplitItem[];
 
 export interface ProposalSignature {
   date: string;
@@ -126,12 +167,15 @@ export interface Proposal {
   series_uuid?: string;
   status: ProposalStatus;
   version: number | null;
+  title?: string;
   title_md: string | null;
   description_md: string | null;
   description_html?: string;
   language: string;
   currency: string;
   company_id: number;
+  company_website?: string;
+  contact_avatar_uuid?: string;
   company_name?: string;
   company_email?: string;
   company_phone?: string;
