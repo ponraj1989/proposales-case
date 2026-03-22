@@ -23,7 +23,7 @@ proposales-platform/
 
 - **Dashboard** — KPIs, pipeline value, status distribution, recent proposals
 - **Proposals** — Full CRUD, search, filter by status, detail view with blocks/signatures/tracking
-- **Content Library** — Browse and manage reusable content blocks
+- **Content Library** — Create, edit, delete, bulk archive, and restore reusable content blocks
 - **Companies** — List companies and view their templates
 - **Analytics** — Pipeline funnel, status donut chart, monthly trends, performance metrics, improvement suggestions
 - **AI Sales Assistant** — Chat interface powered by Vercel AI SDK with tool-calling capabilities:
@@ -32,6 +32,8 @@ proposales-platform/
   - Negotiate pricing with margin-aware suggestions
   - Generate proposal content
   - Provide actionable improvement recommendations
+  - Browser voice mode: speech-to-text input
+- **Session-Based Conversation Persistence** — AI conversations are stored in Redis and reloaded per authenticated user session
 
 ## Tech Stack
 
@@ -44,7 +46,7 @@ proposales-platform/
 | API Client | Typed SDK with Zod validation |
 | AI | Vercel AI SDK + OpenAI (tool-calling) |
 | Auth | Google OAuth (NextAuth.js) + API key fallback |
-| Rate Limiting | Upstash Redis |
+| Rate Limiting + Chat Storage | Redis (session-scoped conversation persistence) |
 | Deployment | Vercel |
 
 ## Getting Started
@@ -84,7 +86,7 @@ Fill in:
 - `NEXTAUTH_URL` — Your app URL (`http://localhost:3000` for local dev)
 - `ALLOWED_EMAILS` — (Optional) Comma-separated emails allowed to sign in via Google
 - `ALLOWED_DOMAINS` — (Optional) Comma-separated domains allowed (e.g., `yourcompany.com`)
-- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — Upstash Redis credentials (for rate limiting)
+- `REDIS_URL` — Redis connection URL (used for rate limiting and AI conversation storage)
 - `OPENAI_API_KEY` — OpenAI API key (for AI features)
 
 **Generate NEXTAUTH_SECRET:**
@@ -144,6 +146,7 @@ The `vercel.json` already configures:
 - **Session**: JWT-based (Google OAuth) + httpOnly, secure, sameSite=strict cookies (API key)
 - **Access Control**: Optional email/domain whitelisting for Google sign-in
 - **Rate Limiting**: Upstash Redis-based (60 req/min API, 20 req/min AI)
+- **Conversation Persistence**: Redis-backed, session-scoped conversation storage and retrieval
 - **API Proxy**: All Proposales API calls proxied through server — token never exposed to client
 - **CSP Headers**: Strict Content-Security-Policy applied to all routes
 - **Input Validation**: Zod schemas validate all API inputs server-side

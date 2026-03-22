@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @layer base {
   * {
@@ -16,10 +16,14 @@
 
 @layer components {
   .sidebar-link {
-    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 transition-all duration-150 hover:bg-brand-50 hover:text-brand-600;
+    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 transition-all duration-200 hover:bg-gray-100 hover:text-gray-900;
   }
   .sidebar-link-active {
-    @apply bg-brand-50 text-brand-600;
+    @apply bg-gray-100 text-gray-900 shadow-sm shadow-gray-100;
+  }
+  /* Page content fade-in */
+  .page-enter {
+    animation: pageEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 }
 
@@ -37,4 +41,450 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #9ba3b5;
+}
+
+/* ── Login page animations ── */
+
+/* Floating particles */
+@keyframes loginFloat {
+  0%, 100% { transform: translateY(0) translateX(0) scale(1); }
+  25%      { transform: translateY(-40px) translateX(15px) scale(1.1); }
+  50%      { transform: translateY(-15px) translateX(-20px) scale(0.9); }
+  75%      { transform: translateY(-50px) translateX(8px) scale(1.05); }
+}
+
+/* Background mesh */
+.login-mesh {
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(0, 0, 0, 0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 60%, rgba(0, 0, 0, 0.04) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 50% at 50% 20%, rgba(0, 0, 0, 0.03) 0%, transparent 50%);
+  animation: loginMeshShift 12s ease-in-out infinite;
+}
+@keyframes loginMeshShift {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 0.85; }
+}
+
+/* Floating orbs */
+.login-orb-1 {
+  animation: loginOrbDrift1 18s ease-in-out infinite;
+}
+.login-orb-2 {
+  animation: loginOrbDrift2 22s ease-in-out infinite;
+}
+.login-orb-3 {
+  animation: loginOrbDrift1 15s ease-in-out infinite reverse;
+}
+@keyframes loginOrbDrift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(40px, -30px) scale(1.1); }
+  66%      { transform: translate(-25px, 20px) scale(0.95); }
+}
+@keyframes loginOrbDrift2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(-35px, -25px) scale(1.08); }
+}
+
+/* Pulse rings on logo */
+.login-pulse-ring {
+  animation: loginPulse 3s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.login-pulse-ring-delayed {
+  animation: loginPulse 3s cubic-bezier(0.16, 1, 0.3, 1) 1.5s infinite;
+}
+@keyframes loginPulse {
+  0%   { transform: scale(1); opacity: 0.4; }
+  70%  { transform: scale(1.5); opacity: 0; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* Icon body entrance */
+.login-icon-body {
+  animation: loginIconPop 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+@keyframes loginIconPop {
+  from { opacity: 0; transform: scale(0.5) rotate(-12deg); }
+  70%  { transform: scale(1.08) rotate(2deg); }
+  to   { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+/* Shine sweep on logo */
+.login-shine {
+  animation: loginShineSweep 4s ease-in-out 1s infinite;
+}
+@keyframes loginShineSweep {
+  0%, 80%, 100% { left: -100%; }
+  20%           { left: 150%; }
+}
+
+/* Card glow pulse */
+.login-card-glow {
+  animation: loginGlow 4s ease-in-out infinite;
+}
+@keyframes loginGlow {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 0.8; }
+}
+
+/* Typing cursor blink */
+.login-cursor {
+  animation: loginBlink 1s step-end infinite;
+}
+@keyframes loginBlink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Feature pills entrance */
+.login-pill {
+  animation: loginPillIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes loginPillIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.9); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Trust badge */
+.login-trust {
+  animation: fadeSlideUp 0.5s ease-out 0.8s both;
+}
+
+/* Card */
+.login-card {
+  animation: cardAppear 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes cardAppear {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.login-logo {
+  animation: logoReveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+@keyframes logoReveal {
+  from { opacity: 0; transform: scale(0.7) rotate(-8deg); }
+  to   { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+.login-title {
+  animation: fadeSlideUp 0.5s ease-out 0.3s both;
+}
+.login-subtitle {
+  animation: fadeSlideUp 0.5s ease-out 0.4s both;
+}
+.login-features {
+  animation: fadeSlideUp 0.5s ease-out 0.5s both;
+}
+.login-google {
+  animation: fadeSlideUp 0.5s ease-out 0.55s both;
+}
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-shake {
+  animation: shake 0.4s ease-in-out;
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-6px); }
+  40%      { transform: translateX(6px); }
+  60%      { transform: translateX(-4px); }
+  80%      { transform: translateX(4px); }
+}
+
+.animate-in {
+  animation: expandIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes expandIn {
+  from { opacity: 0; transform: translateY(-8px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0); max-height: 300px; }
+}
+
+/* ── Landing page animations ── */
+
+/* Gradient text */
+.landing-gradient-text {
+  background: linear-gradient(135deg, #171717 0%, #404040 40%, #737373 70%, #171717 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 4s ease-in-out infinite;
+}
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% center; }
+  50%      { background-position: 100% center; }
+}
+
+/* Text reveal animation */
+.landing-text-reveal.animate span {
+  display: block;
+  animation: textRevealUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.landing-text-reveal.animate span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+@keyframes textRevealUp {
+  from { opacity: 0; transform: translateY(30px) skewY(2deg); }
+  to   { opacity: 1; transform: translateY(0) skewY(0); }
+}
+
+/* Floating orbs */
+.landing-orb {
+  animation: orbFloat 20s ease-in-out infinite;
+}
+.landing-orb-delayed {
+  animation: orbFloat 25s ease-in-out infinite reverse;
+}
+@keyframes orbFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(30px, -20px) scale(1.05); }
+  66%      { transform: translate(-20px, 15px) scale(0.95); }
+}
+
+/* Stat card staggered entrance */
+.landing-stat-card {
+  animation: statCardIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes statCardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Chart bar grow */
+.landing-bar {
+  animation: barGrow 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes barGrow {
+  from { transform: scaleY(0); transform-origin: bottom; }
+  to   { transform: scaleY(1); transform-origin: bottom; }
+}
+
+/* Hero card subtle float */
+.landing-hero-card {
+  animation: heroCardFloat 6s ease-in-out infinite;
+}
+@keyframes heroCardFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+
+/* Scroll indicator */
+.landing-scroll-indicator {
+  animation: scrollFade 2s ease-in-out infinite;
+}
+@keyframes scrollFade {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+.landing-scroll-dot {
+  animation: scrollDot 2s ease-in-out infinite;
+}
+@keyframes scrollDot {
+  0%   { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(10px); opacity: 0; }
+}
+
+/* CTA button pulse glow */
+.landing-cta-primary {
+  animation: ctaGlow 3s ease-in-out infinite;
+}
+@keyframes ctaGlow {
+  0%, 100% { box-shadow: 0 10px 30px -5px rgba(108, 99, 255, 0.25); }
+  50%      { box-shadow: 0 15px 40px -5px rgba(108, 99, 255, 0.4); }
+}
+
+/* ── Chat page animations ── */
+
+/* Message entrance */
+.chat-msg-enter {
+  animation: chatMsgIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes chatMsgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Suggestion card entrance */
+.chat-suggestion {
+  animation: chatSuggestionIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes chatSuggestionIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Conversation item entrance */
+.chat-conv-item {
+  animation: chatConvIn 0.25s ease-out both;
+}
+@keyframes chatConvIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Dashboard animations ── */
+
+/* Card entrance — staggered slide-up + fade */
+.dash-card-enter {
+  animation: dashCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes dashCardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Mini-bar columns grow from bottom */
+.dash-bar {
+  animation: dashBarGrow 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes dashBarGrow {
+  from { transform: scaleY(0); transform-origin: bottom; }
+  to   { transform: scaleY(1); transform-origin: bottom; }
+}
+
+/* Progress bar fill */
+.dash-progress-bar {
+  animation: dashProgressFill 1s cubic-bezier(0.16, 1, 0.3, 1) both;
+  width: var(--bar-width, 0%);
+}
+@keyframes dashProgressFill {
+  from { width: 0%; }
+  to   { width: var(--bar-width, 0%); }
+}
+
+/* Row cascade */
+.dash-row-enter {
+  animation: dashRowIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes dashRowIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Donut spin-in */
+.dash-donut {
+  animation: dashDonutIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+@keyframes dashDonutIn {
+  from { opacity: 0; transform: rotate(-90deg) scale(0.8); }
+  to   { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+
+/* ── Sidebar page-transition ── */
+.sidebar-link {
+  position: relative;
+  overflow: hidden;
+}
+.sidebar-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(108, 99, 255, 0.06), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+}
+.sidebar-link:hover::after {
+  transform: translateX(100%);
+}
+
+/* ── Venue / availability card in chat ── */
+.venue-card-enter {
+  animation: venueCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes venueCardIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Tool result card shimmer */
+.tool-result-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.tool-result-shimmer::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(108, 99, 255, 0.05), transparent);
+  animation: toolShimmer 2s ease-in-out infinite;
+}
+@keyframes toolShimmer {
+  0%   { left: -100%; }
+  100% { left: 100%; }
+}
+
+/* Page enter transition */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Cost Breakdown Animation ── */
+
+/* Line item slide-in */
+.cost-line-item {
+  animation: costSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes costSlideIn {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Total reveal */
+.cost-total-reveal {
+  animation: costTotalPop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes costTotalPop {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Calendar Day Pop-in ── */
+.cal-day-enter {
+  animation: calDayIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes calDayIn {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Floor Plan Seat Appear ── */
+.floor-plan-seat {
+  animation: seatAppear 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes seatAppear {
+  from { opacity: 0; transform: scale(0); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Kanban Card ── */
+.kanban-card {
+  animation: kanbanIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes kanbanIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Activity Feed Item ── */
+.activity-item {
+  animation: activitySlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes activitySlide {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Smart Suggestion Pill ── */
+.smart-suggestion {
+  animation: suggestionPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes suggestionPop {
+  from { opacity: 0; transform: translateY(6px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }

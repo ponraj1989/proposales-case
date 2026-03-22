@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth';
 import {
   createConversation,
   listConversations,
+  getMessages,
 } from '@/lib/chat-store';
 import { createLogger } from '@/lib/logger';
 
@@ -15,8 +16,14 @@ export async function GET() {
 
   try {
     const conversations = await listConversations(session);
+    const withMessages = await Promise.all(
+      conversations.map(async (conversation) => ({
+        ...conversation,
+        messages: await getMessages(conversation.id),
+      })),
+    );
     log.debug('Listed conversations', { count: conversations.length });
-    return NextResponse.json({ data: conversations });
+    return NextResponse.json({ data: withMessages });
   } catch (err) {
     log.error('Failed to list conversations', { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ error: { message: 'Failed to list conversations' } }, { status: 500 });
@@ -35,7 +42,7 @@ export async function POST(request: Request) {
       typeof title === 'string' && title.trim() ? title.trim() : 'New Chat',
     );
     log.info('Conversation created', { id: conversation.id });
-    return NextResponse.json({ data: conversation });
+    return NextResponse.json({ data: { ...conversation, messages: [] } });
   } catch (err) {
     log.error('Failed to create conversation', { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ error: { message: 'Failed to create conversation' } }, { status: 500 });

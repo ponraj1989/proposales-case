@@ -9,13 +9,33 @@ export default async function DashboardPage() {
 
   try {
     const sdk = getSDK();
-    const [proposalRes, contentRes, companyRes] = await Promise.all([
-      sdk.proposals.search({}, 50),
+    
+    // Proposales API limits results to 25 per status, so we need to query each status separately
+    const statuses = ['draft', 'active', 'accepted', 'rejected', 'expired'];
+    const proposalsByStatus = await Promise.all(
+      statuses.map(status =>
+        sdk.proposals.searchAll({ status }).catch(() => [])
+      )
+    );
+    
+    // Merge and deduplicate proposals by UUID
+    const proposalMap = new Map<string, unknown>();
+    for (const statusProposals of proposalsByStatus) {
+      const items = Array.isArray(statusProposals) ? statusProposals : [];
+      for (const proposal of items) {
+        const uuid = (proposal as Record<string, unknown>)?.uuid as string | undefined;
+        if (uuid && !proposalMap.has(uuid)) {
+          proposalMap.set(uuid, proposal);
+        }
+      }
+    }
+    proposals = Array.from(proposalMap.values());
+
+    const [contentRes, companyRes] = await Promise.all([
       sdk.content.list(),
       sdk.companies.list(),
     ]);
 
-    proposals = Array.isArray(proposalRes.data) ? proposalRes.data : [proposalRes.data];
     content = Array.isArray(contentRes.data) ? contentRes.data : [];
     companies = Array.isArray(companyRes.data) ? companyRes.data : [];
   } catch (e) {

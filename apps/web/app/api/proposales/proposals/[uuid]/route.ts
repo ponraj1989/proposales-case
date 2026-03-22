@@ -21,7 +21,7 @@ export async function GET(
   });
 }
 
-// PATCH /api/proposales/proposals/[uuid]
+// PATCH /api/proposales/proposals/[uuid] — update proposal data sub-object
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ uuid: string }> },
@@ -47,12 +47,4 @@ export async function PATCH(
       return NextResponse.json({ error: { message } }, { status: 500 });
     }
   });
-}
-
-// PUT /api/proposales/proposals/[uuid] — alias for PATCH
-export async function PUT(
-  request: Request,
-  context: { params: Promise<{ uuid: string }> },
-) {
-  return PATCH(request, context);
 }

@@ -13,14 +13,76 @@ import {
   CardHeader,
   CardTitle,
   CardContent,
-  Modal,
-  ModalHeader,
-  ModalTitle,
-  ModalFooter,
   formatCurrency,
   formatDate,
 } from '@proposales/ui';
-import { useProposal, apiPut } from '@/lib/hooks';
+import { useProposal, apiPatch, useContent } from '@/lib/hooks';
+
+interface EditBlock {
+  uuid: string;
+  content_id?: number;
+  title: string;
+  type: string;
+  quantity: number;
+  removed: boolean;
+}
+
+function toUnixSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? Math.floor(value / 1000) : value;
+  }
+  if (typeof value === 'string') {
+    const timestamp = new Date(value).getTime();
+    if (!Number.isNaN(timestamp)) return Math.floor(timestamp / 1000);
+  }
+  return null;
+}
+
+function buildActivityRows(proposal: Record<string, unknown>) {
+  const tracking = proposal.tracking as Record<string, unknown> | undefined;
+  const signatures = Array.isArray(proposal.signatures)
+    ? (proposal.signatures as Record<string, unknown>[])
+    : [];
+  const signedAt = tracking?.accepted_at ?? signatures[0]?.date;
+
+  const rows = [
+    {
+      label: 'Created',
+      time: toUnixSeconds(proposal.created_at),
+    },
+    {
+      label: 'Sent',
+      time: toUnixSeconds(tracking?.sent_at),
+    },
+    {
+      label: 'First viewed',
+      time: toUnixSeconds(tracking?.first_viewed_at),
+    },
+    {
+      label: 'Last viewed',
+      time: toUnixSeconds(tracking?.last_viewed_at),
+    },
+    {
+      label: 'E-signed',
+      time: toUnixSeconds(signedAt),
+    },
+    {
+      label: 'Rejected',
+      time: toUnixSeconds(tracking?.rejected_at),
+    },
+    {
+      label: 'Expired',
+      time: toUnixSeconds(tracking?.expired_at),
+    },
+  ].filter((row): row is { label: string; time: number } => row.time != null);
+
+  const viewCount = tracking?.number_of_views;
+  if (typeof viewCount === 'number') {
+    rows.push({ label: 'Views', time: -viewCount });
+  }
+
+  return rows;
+}
 
 export default function ProposalDetailPage() {
   const { uuid } = useParams<{ uuid: string }>();
@@ -28,9 +90,14 @@ export default function ProposalDetailPage() {
   const { data, error, isLoading, mutate } = useProposal(uuid);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [generatingDesc, setGeneratingDesc] = useState(false);
 
   const proposal = data?.data as Record<string, unknown> | undefined;
+  const activityRows = proposal ? buildActivityRows(proposal) : [];
+
+  const { data: contentData } = useContent();
+  const contentItems: { variation_id: number; title: Record<string, string> }[] = contentData?.data ?? [];
 
   const [formData, setFormData] = useState({
     title_md: '',
@@ -40,6 +107,8 @@ export default function ProposalDetailPage() {
     contact_phone: '',
     recipient_company_name: '',
   });
+  const [editBlocks, setEditBlocks] = useState<EditBlock[]>([]);
+  const [addBlockId, setAddBlockId] = useState<string>('');
 
   function startEdit() {
     if (proposal) {
@@ -51,30 +120,74 @@ export default function ProposalDetailPage() {
         contact_phone: (proposal.contact_phone as string) ?? '',
         recipient_company_name: (proposal.recipient_company_name as string) ?? '',
       });
+      const blocks = Array.isArray(proposal.blocks)
+        ? (proposal.blocks as Record<string, unknown>[]).map((b) => ({
+            uuid: (b.uuid as string) || '',
+            content_id: b.content_id as number | undefined,
+            title: (b.title || `Block`) as string,
+            type: (b.type || 'product-block') as string,
+            quantity: (b.quantity as number) ?? 1,
+            removed: false,
+          }))
+        : [];
+      setEditBlocks(blocks);
     }
+    setSaveError(null);
     setEditing(true);
   }
 
   async function handleSave() {
     setSaving(true);
+    setSaveError(null);
     try {
-      await apiPut(`/api/proposales/proposals/${uuid}`, formData);
+      // PATCH data sub-object — the only supported update method in the Proposales API
+      const existingData = (proposal?.data as Record<string, unknown>) || {};
+      const nameParts = formData.contact_name.split(' ');
+      const patchData: Record<string, unknown> = {
+        ...existingData,
+        source: existingData.source || 'manual_edit',
+        title_md: formData.title_md || undefined,
+        description_md: formData.description_md || undefined,
+        contact_email: formData.contact_email || undefined,
+        contact_name: formData.contact_name || undefined,
+        contact_phone: formData.contact_phone || undefined,
+        recipient_first_name: nameParts[0] || undefined,
+        recipient_last_name: nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined,
+        recipient_company_name: formData.recipient_company_name || undefined,
+      };
+
+      await apiPatch(`/api/proposales/proposals/${uuid}`, { data: patchData });
+
       setEditing(false);
       mutate();
-    } catch {
-      // TODO: toast
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleStatusChange(status: string) {
+  async function handleGenerateDescription() {
+    setGeneratingDesc(true);
     try {
-      await apiPut(`/api/proposales/proposals/${uuid}`, { status });
-      setShowStatusModal(false);
-      mutate();
+      const res = await fetch('/api/ai/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: formData.title_md,
+          context: formData.contact_name
+            ? `Client: ${formData.contact_name}, Company: ${formData.recipient_company_name}`
+            : undefined,
+        }),
+      });
+      if (res.ok) {
+        const { description } = await res.json();
+        setFormData((prev) => ({ ...prev, description_md: description }));
+      }
     } catch {
       // TODO: toast
+    } finally {
+      setGeneratingDesc(false);
     }
   }
 
@@ -114,8 +227,8 @@ export default function ProposalDetailPage() {
             </Button>
             {!editing ? (
               <>
-                <Button variant="secondary" onClick={() => setShowStatusModal(true)}>
-                  Change Status
+                <Button variant="secondary" onClick={() => mutate()}>
+                  ↻ Refresh
                 </Button>
                 <Button onClick={startEdit}>Edit</Button>
               </>
@@ -133,6 +246,12 @@ export default function ProposalDetailPage() {
         }
       />
 
+      {saveError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="text-sm text-red-700">Save failed: {saveError}</p>
+        </div>
+      )}
+
       {/* Info Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Card */}
@@ -149,12 +268,25 @@ export default function ProposalDetailPage() {
                     value={formData.title_md}
                     onChange={(e) => setFormData({ ...formData, title_md: e.target.value })}
                   />
-                  <Textarea
-                    label="Description"
-                    value={formData.description_md}
-                    onChange={(e) => setFormData({ ...formData, description_md: e.target.value })}
-                    rows={4}
-                  />
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm font-medium text-gray-700">Description</label>
+                      <Button
+                        variant="secondary"
+                        onClick={handleGenerateDescription}
+                        loading={generatingDesc}
+                        className="text-xs"
+                      >
+                        ✨ AI Generate
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={formData.description_md}
+                      onChange={(e) => setFormData({ ...formData, description_md: e.target.value })}
+                      rows={6}
+                      placeholder={generatingDesc ? 'Generating hotel description...' : 'Enter proposal description or click AI Generate'}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -172,6 +304,10 @@ export default function ProposalDetailPage() {
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Status</label>
                       <div className="mt-1"><StatusBadge status={proposal.status as string} /></div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 uppercase">Progress</label>
+                      <div className="mt-1"><ProposalDetailStepper proposal={proposal} /></div>
                     </div>
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Version</label>
@@ -192,7 +328,73 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Blocks */}
-          {Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 ? (
+          {editing ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Blocks ({editBlocks.filter(b => !b.removed).length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {editBlocks.map((block, i) => block.removed ? null : (
+                    <div key={block.uuid || i} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{block.title}</p>
+                        <p className="text-xs text-gray-500">{block.type}{block.content_id ? ` · Content #${block.content_id}` : ''}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setEditBlocks(prev => prev.map((b, idx) =>
+                            idx === i ? { ...b, removed: true } : b
+                          ));
+                        }}
+                        className="shrink-0 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {editBlocks.filter(b => !b.removed).length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-4">No blocks — add content below</p>
+                  )}
+                  {/* Add block from content library */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                    <select
+                      value={addBlockId}
+                      onChange={(e) => setAddBlockId(e.target.value)}
+                      className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-gray-400 focus:outline-none"
+                    >
+                      <option value="">Select content to add...</option>
+                      {contentItems.map((item) => (
+                        <option key={item.variation_id} value={String(item.variation_id)}>
+                          {item.title?.en || Object.values(item.title || {})[0] || `Content #${item.variation_id}`}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="secondary"
+                      disabled={!addBlockId}
+                      onClick={() => {
+                        const cid = parseInt(addBlockId, 10);
+                        const found = contentItems.find(c => c.variation_id === cid);
+                        const title = found?.title?.en || Object.values(found?.title || {})[0] || `Content #${cid}`;
+                        setEditBlocks(prev => [...prev, {
+                          uuid: `new-${Date.now()}`,
+                          content_id: cid,
+                          title: String(title),
+                          type: 'product-block',
+                          quantity: 1,
+                          removed: false,
+                        }]);
+                        setAddBlockId('');
+                      }}
+                    >
+                      + Add
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Blocks ({(proposal.blocks as unknown[]).length})</CardTitle>
@@ -208,7 +410,7 @@ export default function ProposalDetailPage() {
                       <div className="text-right">
                         {block.unit_value_with_discount_with_tax != null ? (
                           <p className="text-sm font-medium tabular-nums">
-                            {formatCurrency(block.unit_value_with_discount_with_tax as number, (proposal.currency as string) || 'USD')}
+                            {formatCurrency(block.unit_value_with_discount_with_tax as number, (proposal.currency as string) || 'EUR')}
                           </p>
                         ) : null}
                         {block.quantity != null ? (
@@ -231,10 +433,10 @@ export default function ProposalDetailPage() {
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-500">Total Value</p>
                 <p className="mt-1 text-3xl font-bold text-gray-900">
-                  {formatCurrency((proposal.value_with_tax as number) || 0, (proposal.currency as string) || 'USD')}
+                  {formatCurrency((proposal.value_with_tax as number) || 0, (proposal.currency as string) || 'EUR')}
                 </p>
                 <p className="mt-1 text-xs text-gray-400">
-                  {formatCurrency((proposal.value_without_tax as number) || 0, (proposal.currency as string) || 'USD')} excl. tax
+                  {formatCurrency((proposal.value_without_tax as number) || 0, (proposal.currency as string) || 'EUR')} excl. tax
                 </p>
               </div>
             </CardContent>
@@ -282,31 +484,19 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Tracking */}
-          {proposal.tracking ? (
+          {activityRows.length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Activity</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {(proposal.tracking as Record<string, unknown>).sent_at ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Sent</span>
-                      <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).sent_at as string).getTime() / 1000)}</span>
+                  {activityRows.map((row) => (
+                    <div key={`${row.label}-${row.time}`} className="flex justify-between">
+                      <span className="text-gray-500">{row.label}</span>
+                      <span>{row.label === 'Views' ? Math.abs(row.time) : formatDate(row.time)}</span>
                     </div>
-                  ) : null}
-                  {(proposal.tracking as Record<string, unknown>).first_viewed_at ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">First viewed</span>
-                      <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).first_viewed_at as string).getTime() / 1000)}</span>
-                    </div>
-                  ) : null}
-                  {(proposal.tracking as Record<string, unknown>).number_of_views != null ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Views</span>
-                      <span>{(proposal.tracking as Record<string, unknown>).number_of_views as number}</span>
-                    </div>
-                  ) : null}
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -333,29 +523,63 @@ export default function ProposalDetailPage() {
         </div>
       </div>
 
-      {/* Status Change Modal */}
-      <Modal open={showStatusModal} onClose={() => setShowStatusModal(false)}>
-        <ModalHeader>
-          <ModalTitle>Change Proposal Status</ModalTitle>
-        </ModalHeader>
-        <div className="grid grid-cols-2 gap-3">
-          {['draft', 'active', 'accepted', 'rejected', 'expired', 'withdrawn'].map((st) => (
-            <button
-              key={st}
-              onClick={() => handleStatusChange(st)}
-              disabled={proposal.status === st}
-              className="rounded-lg border border-gray-200 p-3 text-center text-sm font-medium capitalize transition-colors hover:bg-brand-50 hover:border-brand-300 disabled:opacity-40 disabled:cursor-not-allowed"
+    </div>
+  );
+}
+
+// ─── Live Status Stepper for detail page ───
+
+const DETAIL_STEPS = [
+  { key: 'draft', label: 'Draft' },
+  { key: 'sent', label: 'Sent' },
+  { key: 'viewed', label: 'Viewed' },
+  { key: 'signed', label: 'E-signed' },
+] as const;
+
+function ProposalDetailStepper({ proposal }: { proposal: Record<string, unknown> }) {
+  const status = (proposal.status as string) || 'draft';
+  const tracking = proposal.tracking as Record<string, unknown> | undefined;
+  const signatures = proposal.signatures as unknown[] | undefined;
+
+  let step = 0;
+  if (status === 'accepted' || (signatures && signatures.length > 0)) step = 3;
+  else if (tracking?.first_viewed_at || (proposal.viewed_count as number) > 0 || (tracking?.number_of_views as number) > 0) step = 2;
+  else if (status === 'active' || tracking?.sent_at) step = 1;
+
+  if (status === 'rejected') {
+    return <Badge variant="error">Rejected</Badge>;
+  }
+  if (status === 'expired') {
+    return <Badge variant="warning">Expired</Badge>;
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {DETAIL_STEPS.map((s, i) => {
+        const isDone = i <= step;
+        const isCurrent = i === step;
+        return (
+          <div key={s.key} className="flex items-center">
+            <div
+              className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-all ${
+                isDone
+                  ? isCurrent
+                    ? 'bg-green-500 text-white ring-2 ring-green-200'
+                    : 'bg-green-500 text-white'
+                  : 'bg-gray-100 text-gray-400'
+              }`}
             >
-              {st}
-            </button>
-          ))}
-        </div>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setShowStatusModal(false)}>
-            Cancel
-          </Button>
-        </ModalFooter>
-      </Modal>
+              {isDone ? '✓' : i + 1}
+            </div>
+            <span className={`text-[10px] ml-0.5 mr-1 ${isDone ? 'text-green-700 font-medium' : 'text-gray-400'}`}>
+              {s.label}
+            </span>
+            {i < DETAIL_STEPS.length - 1 && (
+              <div className={`h-0.5 w-4 ${i < step ? 'bg-green-400' : 'bg-gray-200'}`} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

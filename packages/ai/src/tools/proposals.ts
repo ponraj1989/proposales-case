@@ -1,6 +1,94 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import type { ProposalesSDK } from '@proposales/api-client';
+import { integrationFieldSchema, type ProposalesSDK, type Proposal, type ProposalSearchResult } from '@proposales/api-client';
+
+// ─── Content Price Map (matches Proposales dashboard pricing) ───
+const CONTENT_PRICE_MAP: Record<string, { price_cents: number; unit_type: string }> = {
+  'all meals':                { price_cents: 8000,   unit_type: 'person' },
+  'full board':               { price_cents: 8000,   unit_type: 'person' },
+  'boardroom medium':         { price_cents: 22000,  unit_type: 'day' },
+  'double room standard':     { price_cents: 7600,   unit_type: 'day' },
+  'double room':              { price_cents: 7600,   unit_type: 'day' },
+  'projector':                { price_cents: 1500,   unit_type: 'day' },
+  'breakfast':                { price_cents: 1800,   unit_type: 'person' },
+  'lunch':                    { price_cents: 2500,   unit_type: 'person' },
+  'dinner':                   { price_cents: 2500,   unit_type: 'person' },
+  'transportation':           { price_cents: 2500,   unit_type: 'person' },
+  'boardroom grand':          { price_cents: 30000,  unit_type: 'day' },
+  'boardroom small':          { price_cents: 15000,  unit_type: 'day' },
+  'banquet small':            { price_cents: 50000,  unit_type: 'day' },
+  'banquet medium':           { price_cents: 80000,  unit_type: 'day' },
+  'banquet grand':            { price_cents: 100000, unit_type: 'day' },
+  'single room':              { price_cents: 5000,   unit_type: 'day' },
+  'suite room':               { price_cents: 10000,  unit_type: 'day' },
+  'suite':                    { price_cents: 10000,  unit_type: 'day' },
+  'microphones and speakers': { price_cents: 1000,   unit_type: 'day' },
+  'microphone':               { price_cents: 1000,   unit_type: 'day' },
+  'stage decors':             { price_cents: 10000,  unit_type: 'unit' },
+  'stage decoration':         { price_cents: 10000,  unit_type: 'unit' },
+  'decoration':               { price_cents: 10000,  unit_type: 'unit' },
+  'coffee and snacks':        { price_cents: 500,    unit_type: 'person' },
+  'coffee':                   { price_cents: 500,    unit_type: 'person' },
+  'snacks':                   { price_cents: 500,    unit_type: 'person' },
+};
+
+function lookupContentPrice(title: string): { price_cents: number; unit_type: string } | null {
+  const lower = title.toLowerCase().trim();
+  if (CONTENT_PRICE_MAP[lower]) return CONTENT_PRICE_MAP[lower];
+  let best: { price_cents: number; unit_type: string } | null = null;
+  let bestLen = 0;
+  for (const [key, val] of Object.entries(CONTENT_PRICE_MAP)) {
+    if (lower.includes(key) && key.length > bestLen) {
+      best = val;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+
+// ─── Content Image Map (local images in /public/images/) ───
+const CONTENT_IMAGE_MAP: Record<string, string> = {
+  'banquet grand':            '/images/Banquet Grand.webp',
+  'banquet medium':           '/images/Banquet Medium.jpg',
+  'banquet small':            '/images/Banquet Small.jpeg',
+  'boardroom grand':          '/images/Boardroom Grand.jpg',
+  'boardroom medium':         '/images/Boardroom Medium.jpg',
+  'boardroom small':          '/images/Boardroom small.jpg',
+  'double room standard':     '/images/Double Room.jpg',
+  'double room':              '/images/Double Room.jpg',
+  'single room':              '/images/Single Room.webp',
+  'suite room':               '/images/Suite Room.webp',
+  'suite':                    '/images/Suite Room.webp',
+  'dinner':                   '/images/Dinner.jpg',
+  'lunch':                    '/images/lunch.webp',
+  'breakfast':                '/images/Breakfast.webp',
+  'all meals':                '/images/Full Board All Meals.webp',
+  'full board':               '/images/Full Board All Meals.webp',
+  'coffee and snacks':        '/images/Coffee and Snacks.avif',
+  'coffee':                   '/images/Coffee and Snacks.avif',
+  'snacks':                   '/images/Coffee and Snacks.avif',
+  'projector':                '/images/Projector.jpg',
+  'microphones and speakers': '/images/microphone and speakers.webp',
+  'microphone':               '/images/microphone and speakers.webp',
+  'stage decors':             '/images/decoration.jpeg',
+  'stage decoration':         '/images/decoration.jpeg',
+  'decoration':               '/images/decoration.jpeg',
+  'transportation':           '/images/transportation.jpg',
+};
+
+function lookupContentImage(title: string): string | undefined {
+  const lower = title.toLowerCase().trim();
+  if (CONTENT_IMAGE_MAP[lower]) return CONTENT_IMAGE_MAP[lower];
+  let best: string | undefined;
+  let bestLen = 0;
+  for (const [key, val] of Object.entries(CONTENT_IMAGE_MAP)) {
+    if (lower.includes(key) && key.length > bestLen) {
+      best = val;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
 
 // ─── Existing tools ───
 
@@ -13,15 +101,9 @@ export function createSearchProposalsTool(sdk: ProposalesSDK) {
         .record(z.string())
         .optional()
         .describe('Key-value pairs to filter proposals by their data field properties'),
-      limit: z
-        .number()
-        .min(1)
-        .max(25)
-        .optional()
-        .describe('Maximum number of results to return (default 10)'),
     }),
-    execute: async ({ filters, limit }) => {
-      const result = await sdk.proposals.search(filters, limit ?? 10);
+    execute: async ({ filters }) => {
+      const result = await sdk.proposals.searchAll(filters);
       return result;
     },
   });
@@ -41,13 +123,65 @@ export function createGetProposalTool(sdk: ProposalesSDK) {
   });
 }
 
+export function createListMyProposalsTool(sdk: ProposalesSDK, userInfo?: { email?: string; name?: string }) {
+  return tool({
+    description:
+      'List the current customer user\'s own proposals/bookings for selection before modification. Use this when the user asks to modify/revise a booking but has not provided a proposal UUID yet.',
+    inputSchema: z.object({}),
+    execute: async () => {
+      const userEmail = (userInfo?.email || '').trim().toLowerCase();
+      if (!userEmail) {
+        return {
+          type: 'my_proposals',
+          proposals: [],
+          message: 'User email is not available in context.',
+        };
+      }
+
+      const byContact = await sdk.proposals.searchAll({ contact_email: userEmail });
+      const byRecipient = await sdk.proposals.searchAll({ recipient_email: userEmail }).catch(() => []);
+
+      const merged = new Map<string, ProposalSearchResult>();
+      for (const item of [...byContact, ...byRecipient]) {
+        if (item?.uuid) merged.set(item.uuid, item);
+      }
+
+      const proposals = Array.from(merged.values())
+        .sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))
+        .slice(0, 20)
+        .map((proposal) => {
+          const meta = (proposal.data ?? {}) as Record<string, unknown>;
+          const guestsRaw = meta.guests;
+          const guests = typeof guestsRaw === 'number' ? guestsRaw : Number(guestsRaw);
+          return {
+            booking_number: proposal.uuid,
+            proposal_uuid: proposal.uuid,
+            title: proposal.title || 'Untitled Proposal',
+            status: proposal.status || 'draft',
+            event_date: typeof meta.event_date === 'string' ? meta.event_date : null,
+            guests: Number.isFinite(guests) ? guests : null,
+            updated_at: proposal.updated_at,
+          };
+        });
+
+      return {
+        type: 'my_proposals' as const,
+        proposals,
+        count: proposals.length,
+      };
+    },
+  });
+}
+
 export function createCreateProposalTool(sdk: ProposalesSDK) {
   return tool({
     description:
-      'Create a new proposal in the Proposales system. ONLY call this AFTER the user has accepted a draft (e.g. clicked Accept or said they approve). Never call this without prior user approval.',
+      'Create a new proposal in the Proposales system. ONLY call this AFTER the user has accepted a draft (e.g. clicked Accept or said they approve). Never call this without prior user approval. Supports all Proposales API fields including invoicing, tax options, attachments, and background media.',
     inputSchema: z.object({
       company_id: z.number().describe('The company ID the proposal belongs to'),
       language: z.string().length(2).describe('Two-letter language code (e.g., "en", "sv")'),
+      creator_email: z.string().email().optional().describe('Email of the proposal creator (must be a company member)'),
+      contact_email: z.string().email().optional().describe('Internal team contact email for notifications'),
       title_md: z.string().optional().describe('Proposal title in markdown'),
       description_md: z.string().optional().describe('Proposal description in markdown'),
       recipient: z
@@ -55,19 +189,62 @@ export function createCreateProposalTool(sdk: ProposalesSDK) {
           first_name: z.string().optional(),
           last_name: z.string().optional(),
           email: z.string().optional(),
+          phone: z.string().optional(),
           company_name: z.string().optional(),
+          sources: z.object({
+            integration: z.object({
+              id: z.number(),
+              contactId: z.string(),
+              metadata: z
+                .object({
+                  integration_fields: z.array(integrationFieldSchema).optional(),
+                })
+                .catchall(z.unknown())
+                .optional(),
+            }).optional(),
+          }).optional(),
         })
         .optional()
-        .describe('Recipient information'),
+        .describe('Recipient (external customer) information'),
+      data: z.record(z.unknown()).optional().describe('Custom metadata attached to the proposal (preserved when sent)'),
+      invoicing_enabled: z.boolean().optional().describe('Enable invoicing — allows collecting company name, org number, and address on the active proposal'),
+      tax_options: z
+        .object({
+          mode: z.enum(['standard', 'simplified', 'tax-free', 'none']).optional().describe('standard: show tax/VAT totals, simplified: single footer note, tax-free: exempt, none: hidden'),
+          tax_included: z.boolean().optional().describe('Whether displayed prices include tax'),
+          tax_label_key: z.string().optional().describe('Label for tax (e.g. "VAT", "Tax", "GST")'),
+        })
+        .optional()
+        .describe('Tax display and calculation settings'),
+      background_image: z.object({ id: z.number(), uuid: z.string() }).optional().describe('Background image from a template'),
+      background_video: z.object({ id: z.number(), uuid: z.string() }).optional().describe('Background video from a template'),
       blocks: z
         .array(
-          z.object({
-            content_id: z.number(),
-            type: z.enum(['product-block', 'video-block']).optional(),
-          }),
+          z.union([
+            z.object({
+              content_id: z.number(),
+              quantity: z.number().min(1).optional().describe('Quantity for this content block (e.g. number of rooms, servings, etc.)'),
+              type: z.enum(['product-block', 'video-block']).optional(),
+            }),
+            z.object({
+              type: z.literal('video-block'),
+              video_url: z.string(),
+              title: z.string(),
+            }),
+          ]),
         )
         .optional()
-        .describe('Content blocks to include, referenced by variation_id as content_id'),
+        .describe('Content blocks — reference by variation_id as content_id with optional quantity, or inline video blocks'),
+      attachments: z
+        .array(
+          z.union([
+            z.object({ id: z.number() }),
+            z.object({ mime_type: z.literal('text/html'), name: z.string(), url: z.string() }),
+            z.object({ mime_type: z.literal('application/pdf'), name: z.string(), url: z.string() }),
+          ]),
+        )
+        .optional()
+        .describe('Attachments — from content library (id), HTML links, or PDF uploads'),
     }),
     execute: async (input) => {
       const result = await sdk.proposals.create(input);
@@ -91,82 +268,343 @@ export function createPatchProposalTool(sdk: ProposalesSDK) {
   });
 }
 
+export function createReviseProposalTool(sdk: ProposalesSDK) {
+  return tool({
+    description:
+      'Revise an existing proposal by UUID. The user can quote their proposal reference ID (UUID) from the My Proposals page to revise any proposal — even after e-sign or acceptance. Uses PATCH /v3/proposals/{uuid}/data for metadata fields. Supports both absolute guest updates (guests: 120) and relative guest updates (guest_delta: +20 or -10). After updating, fetches and returns the updated proposal. Do NOT use this for price negotiation — use reviseProposalPricing for discounts instead.',
+    inputSchema: z.object({
+      proposal_uuid: z.string().describe('UUID of the proposal to revise — the user can find this on their My Proposals page as the reference ID'),
+      updates: z.object({
+        title: z.string().optional().describe('New proposal title'),
+        description: z.string().optional().describe('New proposal description'),
+        notes: z.string().optional().describe('Updated special requests or notes'),
+        event_date: z.string().optional().describe('Updated event date (YYYY-MM-DD)'),
+        guests: z.number().optional().describe('Updated guest count as an absolute total (e.g. 120)'),
+        guest_delta: z.number().optional().describe('Adjust guest count by a delta (e.g. +20 for "add 20 people", -10 for "remove 10 people")'),
+        venue_type: z.string().optional().describe('Updated venue type'),
+        event_type: z.string().optional().describe('Updated event type'),
+        time_slot: z.string().optional().describe('Updated time slot (morning, afternoon, evening, full-day)'),
+        contact_name: z.string().optional().describe('Updated contact name'),
+        contact_email: z.string().optional().describe('Updated contact email'),
+        custom: z.record(z.unknown()).optional().describe('Any other custom data fields to update'),
+      }).describe('Fields to update on the proposal'),
+    }),
+    execute: async (input) => {
+      const { proposal_uuid, updates } = input;
+
+      // Build the data payload for PATCH
+      const patchData: Record<string, unknown> = {};
+      if (updates.notes !== undefined) patchData.notes = updates.notes;
+      if (updates.event_date !== undefined) patchData.event_date = updates.event_date;
+      if (updates.venue_type !== undefined) patchData.venue_type = updates.venue_type;
+      if (updates.event_type !== undefined) patchData.event_type = updates.event_type;
+      if (updates.time_slot !== undefined) patchData.time_slot = updates.time_slot;
+      if (updates.contact_name !== undefined) patchData.contact_name = updates.contact_name;
+      if (updates.contact_email !== undefined) patchData.contact_email = updates.contact_email;
+      if (updates.custom) {
+        Object.assign(patchData, updates.custom);
+      }
+
+      try {
+        // Resolve guest updates: delta takes precedence over absolute when both are provided
+        if (updates.guest_delta !== undefined) {
+          const currentResult = await sdk.proposals.get(proposal_uuid);
+          const currentProposal: Proposal = currentResult.data;
+          const currentGuestsRaw = (currentProposal.data ?? {}).guests;
+          const currentGuests = typeof currentGuestsRaw === 'number'
+            ? currentGuestsRaw
+            : Number(currentGuestsRaw);
+          const safeCurrentGuests = Number.isFinite(currentGuests) ? Math.max(0, Math.floor(currentGuests)) : 0;
+          const nextGuests = Math.max(0, safeCurrentGuests + Math.trunc(updates.guest_delta));
+          patchData.guests = nextGuests;
+        } else if (updates.guests !== undefined) {
+          patchData.guests = Math.max(0, Math.floor(updates.guests));
+        }
+
+        // Merge all updates into the data sub-object via PATCH
+        if (updates.title !== undefined) patchData.title_md = updates.title;
+        if (updates.description !== undefined) patchData.description_md = updates.description;
+        if (updates.contact_email !== undefined) patchData.contact_email = updates.contact_email;
+        if (updates.contact_name !== undefined) {
+          const nameParts = updates.contact_name.split(' ');
+          patchData.recipient_first_name = nameParts[0] || '';
+          patchData.recipient_last_name = nameParts.slice(1).join(' ') || '';
+        }
+
+        if (Object.keys(patchData).length > 0) {
+          await sdk.proposals.patchData(proposal_uuid, { data: patchData });
+        }
+
+        // 3. Fetch fresh proposal state
+        const result = await sdk.proposals.get(proposal_uuid);
+        const proposal: Proposal = result.data;
+
+        // Build items from blocks
+        const items = (proposal.blocks ?? []).map((block, idx) => {
+          const qty = block.quantity ?? 1;
+          const unitPriceCents = block.unit_value_with_discount_with_tax ?? 0;
+          const unitPrice = unitPriceCents / 100;
+          return {
+            name: block.title ?? `Item ${idx + 1}`,
+            description: block.description ?? '',
+            quantity: qty,
+            unit_price: unitPrice,
+            total: Math.round(unitPrice * qty * 100) / 100,
+          };
+        });
+
+        const valueWithTax = proposal.value_with_tax ?? 0;
+        const valueWithoutTax = proposal.value_without_tax ?? 0;
+        const subtotal = valueWithoutTax / 100;
+        const tax = Math.round(valueWithTax - valueWithoutTax) / 100;
+        const total = valueWithTax / 100;
+        const data = (proposal.data ?? {}) as Record<string, unknown>;
+        const allUpdatedFields = Object.keys(patchData);
+
+        return {
+          type: 'proposal_revised' as const,
+          proposalUuid: proposal_uuid,
+          proposalUrl: proposal.pdf_url ?? null,
+          title: updates.title ?? proposal.title_md ?? 'Untitled',
+          description: updates.description ?? proposal.description_md ?? '',
+          status: proposal.status ?? 'draft',
+          items,
+          subtotal,
+          tax,
+          total,
+          currency: proposal.currency ?? 'EUR',
+          updatedFields: allUpdatedFields,
+          data,
+          message: `Proposal updated successfully. Changed: ${allUpdatedFields.join(', ')}.`,
+        };
+      } catch (err) {
+        return {
+          type: 'proposal_revised' as const,
+          proposalUuid: proposal_uuid,
+          proposalUrl: null,
+          title: updates.title ?? '',
+          description: '',
+          status: 'unknown',
+          items: [],
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          currency: 'EUR',
+          updatedFields: [],
+          data: {},
+          message: `Failed to update proposal: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  });
+}
+
 // ─── New workflow tools ───
 
 const draftItemSchema = z.object({
-  name: z.string().describe('Item / service name'),
-  description: z.string().describe('Brief description'),
-  quantity: z.number().min(1).describe('Quantity'),
-  unit_price: z.number().min(0).describe('Price per unit in dollars (not cents)'),
-  total: z.number().min(0).describe('quantity × unit_price'),
-  content_id: z
-    .number()
-    .optional()
-    .describe('Matching content/variation ID from the content library, if available'),
+  content_id: z.number().describe('The variation_id of the content item from the Proposales content library. MUST be a valid ID from listContent.'),
+  quantity: z.number().min(1).default(1).describe('Quantity of this item'),
 });
 
-export function createGenerateProposalDraftTool() {
+export function createGenerateProposalDraftTool(
+  sdk?: ProposalesSDK,
+  userInfo?: { email?: string; name?: string },
+) {
   return tool({
     description:
-      'Generate a structured proposal draft for user review. The UI renders this as an interactive card with Accept/Reject buttons. Call this after gathering all requirements from the user. Do NOT call createProposal yet — wait for the user to accept.',
+      'Generate a proposal draft preview for user review. This does NOT create the proposal in Proposales — it only builds a preview card with item names from the content library. The UI renders this as an interactive card with Accept & Generate Proposal / Reject buttons. Call this after gathering all requirements. You MUST call listContent first to get available items and use their variation_id as content_id. NEVER invent prices — prices will be confirmed when the user accepts and the proposal is actually created. The result includes a draft_input object — you MUST pass this unchanged to acceptProposal when the user clicks Accept. CRITICAL: Title must be SHORT — just the event name (max 7 words). Description must be PRECISE — 1-2 factual sentences. Auto-select room by guest count and include catering items if mentioned.',
     inputSchema: z.object({
-      title: z.string().describe('Proposal title'),
+      title: z.string().max(60).describe('STRICT 7-WORD LIMIT. Short elegant hotel event name — MAXIMUM 7 words, no exceptions. Count your words before submitting. Must sound like a premium hotel package. Good: "Grand Ballroom Wedding Reception" (4 words), "Executive Boardroom Retreat" (3 words), "Lakeside Gala Dinner" (3 words). BAD: "Corporate Strategy Summit and Planning for 50 Guests" (too long). Do NOT include guest counts, dates, numbers, or generic words like Setup/Booking.'),
       description: z
         .string()
-        .describe('A 2-3 sentence description of the proposal'),
+        .describe('PRECISE 1-2 sentence description of the hotel booking and its included facilities. Mention venue/space, key services (catering, AV, accommodation), and guest capacity. Example: "Exclusive wedding reception for 200 guests in the Grand Ballroom with full-board catering, stage décor, and overnight accommodation." No marketing fluff.'),
       items: z
         .array(draftItemSchema)
         .min(1)
-        .describe('Line items with pricing'),
+        .describe('Content items from the Proposales content library. Each item must have a content_id (variation_id from listContent) and quantity.'),
       currency: z.string().default('USD').describe('Currency code'),
       recipient_name: z.string().describe('Recipient full name'),
       recipient_email: z.string().describe('Recipient email'),
       recipient_company: z.string().optional().describe('Recipient company name'),
+      recipient_phone: z.string().optional().describe('Recipient phone number'),
       company_id: z.number().describe('Proposales company ID to create under'),
       language: z.string().length(2).default('en').describe('Language code'),
       notes: z.string().optional().describe('Additional notes or special requests'),
+      venue_type: z.enum(['room', 'boardroom', 'banquet', 'conference', 'garden', 'restaurant', 'pool']).optional()
+        .describe('Primary venue type for the proposal — used for dynamic header image'),
+      // Invoicing & Tax
+      invoicing_enabled: z.boolean().optional().describe('Enable invoicing — recipient can provide company name, org number, and billing address on the live proposal'),
+      tax_options: z
+        .object({
+          mode: z.enum(['standard', 'simplified', 'tax-free', 'none']).optional().describe('standard (recommended): itemized tax, simplified: footer note, tax-free: exempt, none: hidden'),
+          tax_included: z.boolean().optional().describe('Whether displayed prices include tax'),
+          tax_label_key: z.string().optional().describe('Regional tax label e.g. VAT, Tax, GST, Moms'),
+        })
+        .optional()
+        .describe('Tax display and calculation settings for the proposal'),
+      // Background media
+      background_image: z.object({ id: z.number(), uuid: z.string() }).optional().describe('Background image (from template)'),
+      background_video: z.object({ id: z.number(), uuid: z.string() }).optional().describe('Background video (from template)'),
+      // Attachments
+      attachments: z
+        .array(
+          z.union([
+            z.object({ id: z.number().describe('Attachment ID from content library') }),
+            z.object({ mime_type: z.literal('text/html'), name: z.string(), url: z.string() }),
+            z.object({ mime_type: z.literal('application/pdf'), name: z.string(), url: z.string() }),
+          ]),
+        )
+        .optional()
+        .describe('Attachments — from content library, HTML links, or PDF uploads'),
+      // Space booking fields — triggers a 7-day hold
+      space_id: z.string().optional().describe('Space ID from checkAvailability (e.g. space-grand-ballroom). If provided, the space will be held for 7 days.'),
+      event_date: z.string().optional().describe('Event date in YYYY-MM-DD format for the booking hold'),
+      time_slot_id: z.string().optional().describe('Time slot ID: morning, afternoon, evening, or full-day'),
+      guests: z.number().optional().describe('Number of guests for the event'),
+      // Discount (for in-conversation negotiation before proposal creation)
+      discount_percent: z.number().min(0).max(50).optional().describe('Discount percentage to apply to all items (0-50). Use this when revising a draft BEFORE the proposal has been created — i.e. the user rejected the draft and asked for a discount within the same conversation.'),
     }),
     execute: async (input) => {
-      const subtotal = input.items.reduce((sum, item) => sum + item.total, 0);
-      const tax = Math.round(subtotal * 0.1 * 100) / 100; // 10% tax estimate
-      const total = Math.round((subtotal + tax) * 100) / 100;
+      // ─── Enforce 7-word title limit ───
+      const titleWords = input.title.trim().split(/\s+/);
+      const safeTitle = titleWords.length > 7 ? titleWords.slice(0, 7).join(' ') : input.title.trim();
+
+      const recipientEmail = userInfo?.email || input.recipient_email;
+      const nameParts = (input.recipient_name || '').split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      // ─── Preview-only: resolve content item names from the content library ───
+      // The actual Proposales API proposal is NOT created here — only on user accept.
+      let resolvedItems: { name: string; description: string; quantity: number; content_id: number; image_url?: string; unit_price: number; total: number; unit_type?: string }[] = [];
+      let headerImage: string | null = null;
+
+      if (sdk) {
+        try {
+          const contentResult = await sdk.content.list();
+          const contentItems = Array.isArray(contentResult.data) ? contentResult.data : [];
+          const contentMap = new Map(contentItems.map((c) => [c.variation_id, c]));
+
+          resolvedItems = input.items.map((item) => {
+            const content = contentMap.get(item.content_id);
+            const title = content?.title?.en || Object.values(content?.title || {})[0] || `Item #${item.content_id}`;
+            const desc = content?.description?.en || Object.values(content?.description || {})[0] || '';
+            const firstImage = content?.images?.[0]?.url || lookupContentImage(title);
+            const priceInfo = lookupContentPrice(title);
+            const unitPrice = priceInfo ? priceInfo.price_cents / 100 : 0;
+            return {
+              name: title,
+              description: desc,
+              quantity: item.quantity,
+              content_id: item.content_id,
+              image_url: firstImage,
+              unit_price: unitPrice,
+              total: Math.round(unitPrice * item.quantity * 100) / 100,
+              unit_type: priceInfo?.unit_type,
+            };
+          });
+
+          // Pick the best header image: first item with an image, or any content image
+          headerImage = resolvedItems.find((i) => i.image_url)?.image_url ?? null;
+        } catch (err) {
+          console.error('Failed to resolve content items for preview:', err instanceof Error ? err.message : String(err));
+          resolvedItems = input.items.map((item) => ({
+            name: `Item #${item.content_id}`,
+            description: '',
+            quantity: item.quantity,
+            content_id: item.content_id,
+            unit_price: 0,
+            total: 0,
+          }));
+        }
+      }
+
+      const subtotal = resolvedItems.reduce((sum, i) => sum + i.total, 0);
+
+      // Apply discount if provided (in-conversation negotiation before proposal creation)
+      const discountPct = input.discount_percent ?? 0;
+      const multiplier = discountPct > 0 ? (100 - discountPct) / 100 : 1;
+      if (discountPct > 0) {
+        for (const item of resolvedItems) {
+          item.unit_price = Math.round(item.unit_price * multiplier * 100) / 100;
+          item.total = Math.round(item.unit_price * item.quantity * 100) / 100;
+        }
+      }
+      const discountedSubtotal = discountPct > 0
+        ? resolvedItems.reduce((sum, i) => sum + i.total, 0)
+        : subtotal;
+      const tax = Math.round(discountedSubtotal * 0.1 * 100) / 100; // 10% estimated tax
+      const grandTotal = Math.round((discountedSubtotal + tax) * 100) / 100;
 
       return {
         type: 'proposal_draft' as const,
         title: input.title,
         description: input.description,
-        items: input.items,
+        items: resolvedItems,
         subtotal,
         tax,
-        total,
+        total: grandTotal,
         currency: input.currency,
         recipient: {
           name: input.recipient_name,
-          email: input.recipient_email,
+          email: recipientEmail || input.recipient_email,
           company: input.recipient_company ?? '',
         },
         company_id: input.company_id,
         language: input.language,
         notes: input.notes ?? '',
-        negotiation_round: 0,
+        venue_type: input.venue_type ?? null,
+        header_image: headerImage,
+        negotiation_round: discountPct > 0 ? 1 : 0,
         max_negotiation_rounds: 3,
-        discount_applied: 0,
+        discount_applied: discountPct,
+        // No proposalUuid yet — created only on acceptance
+        proposalUuid: null,
+        proposalUrl: null,
+        // Store full creation params so acceptProposal can forward them
+        draft_input: {
+          title: safeTitle,
+          description: input.description,
+          items: input.items,
+          currency: input.currency,
+          recipient_name: input.recipient_name,
+          recipient_email: recipientEmail,
+          recipient_company: input.recipient_company,
+          recipient_phone: input.recipient_phone,
+          company_id: input.company_id,
+          language: input.language,
+          notes: input.notes,
+          venue_type: input.venue_type,
+          invoicing_enabled: input.invoicing_enabled,
+          tax_options: input.tax_options,
+          background_image: input.background_image,
+          background_video: input.background_video,
+          attachments: input.attachments,
+          space_id: input.space_id,
+          event_date: input.event_date,
+          time_slot_id: input.time_slot_id,
+          guests: input.guests,
+        },
+        // Space booking details (for display in the draft card)
+        booking_details: (input.space_id && input.event_date) ? {
+          space_id: input.space_id,
+          event_date: input.event_date,
+          time_slot_id: input.time_slot_id,
+          guests: input.guests,
+        } : undefined,
       };
     },
   });
 }
 
-export function createReviseProposalPricingTool() {
+export function createReviseProposalPricingTool(sdk?: ProposalesSDK, userInfo?: { email?: string; name?: string }) {
   return tool({
     description:
-      'Revise a proposal draft with an autonomous discount for negotiation. Call this when the user rejects a draft and wants to negotiate. Automatically applies an appropriate discount based on the negotiation round. Returns a revised draft card.',
+      'Revise a proposal with a discount for negotiation. Call this ONLY after the user has been asked why they rejected and they specifically requested a discount. Uses PATCH /v3/proposals/{uuid}/data to update the SAME proposal (no new proposal created). Fetches real base prices from the proposal blocks, applies a seasonal/demand-based discount, and patches the proposal data with discount metadata. Do NOT mention round counts to the user.',
     inputSchema: z.object({
-      title: z.string().describe('Proposal title (from previous draft)'),
+      proposal_uuid: z.string().describe('UUID of the proposal to revise (from generateProposalDraft or prior revision — same UUID throughout negotiation)'),
+      title: z.string().describe('Proposal title (from the draft)'),
       description: z.string().describe('Proposal description'),
-      items: z
-        .array(draftItemSchema)
-        .min(1)
-        .describe('Original line items with ORIGINAL pricing (before any discount)'),
       currency: z.string().describe('Currency code'),
       recipient_name: z.string().describe('Recipient full name'),
       recipient_email: z.string().describe('Recipient email'),
@@ -177,8 +615,10 @@ export function createReviseProposalPricingTool() {
         .number()
         .min(0)
         .max(3)
-        .describe('Current negotiation round (0 = initial, 1 = first counter, etc.)'),
+        .describe('Current negotiation round (0 = initial, 1 = first counter, etc.) — internal tracking only, never shown to user'),
       notes: z.string().optional(),
+      venue_type: z.enum(['room', 'boardroom', 'banquet', 'conference', 'garden', 'restaurant', 'pool']).optional()
+        .describe('Venue type from the original draft'),
     }),
     execute: async (input) => {
       const round = input.current_negotiation_round + 1;
@@ -186,25 +626,83 @@ export function createReviseProposalPricingTool() {
       // Determine discount based on round
       let discountPercent: number;
       if (round === 1) {
-        discountPercent = 7; // 5-8% range, pick 7
+        discountPercent = 7;
       } else if (round === 2) {
-        discountPercent = 12; // 10-15% range, pick 12
+        discountPercent = 12;
       } else {
-        discountPercent = 18; // up to 20%, pick 18 as "best and final"
+        discountPercent = 18;
       }
 
       const isFinalOffer = round >= 3;
       const multiplier = (100 - discountPercent) / 100;
 
-      const revisedItems = input.items.map((item) => ({
-        ...item,
-        unit_price: Math.round(item.unit_price * multiplier * 100) / 100,
-        total: Math.round(item.quantity * item.unit_price * multiplier * 100) / 100,
-      }));
+      const recipientEmail = userInfo?.email || input.recipient_email;
 
-      const subtotal = revisedItems.reduce((sum, item) => sum + item.total, 0);
-      const tax = Math.round(subtotal * 0.1 * 100) / 100;
-      const total = Math.round((subtotal + tax) * 100) / 100;
+      // Same UUID and URL throughout negotiation
+      const proposalUuid = input.proposal_uuid;
+      let proposalUrl: string | null = null;
+      let revisedItems: { name: string; description: string; quantity: number; unit_price: number; total: number; content_id: number }[] = [];
+      let subtotal = 0;
+      let tax = 0;
+      let total = 0;
+
+      if (sdk) {
+        try {
+          // 1. Fetch the current proposal FIRST to get base prices
+          const currentResult = await sdk.proposals.get(proposalUuid);
+          const current: Proposal = currentResult.data;
+
+          proposalUrl = current.pdf_url ?? null;
+
+          // 2. Build revised items from the ORIGINAL block prices (before any discount)
+          if (current.blocks?.length) {
+            revisedItems = current.blocks.map((block) => {
+              const qty = block.quantity ?? 1;
+              // Use the base price from the block (in cents)
+              const basePriceCents = block.unit_value_with_discount_with_tax ?? 0;
+              // Apply discount to get new price (convert cents to EUR)
+              const discountedPrice = Math.round(basePriceCents * multiplier) / 100;
+              const lineTotal = Math.round(discountedPrice * qty * 100) / 100;
+              return {
+                name: block.title ?? 'Item',
+                description: block.description ?? '',
+                quantity: qty,
+                unit_price: discountedPrice,
+                total: lineTotal,
+                content_id: block.content_id ?? 0,
+              };
+            });
+          }
+
+          // 3. Compute totals from the revised items (more reliable than API totals * multiplier)
+          const valueWithTax = current.value_with_tax ?? 0;
+          const valueWithoutTax = current.value_without_tax ?? 0;
+
+          if (valueWithTax > 0) {
+            // Use API totals if available
+            subtotal = Math.round(valueWithoutTax * multiplier) / 100;
+            tax = Math.round((valueWithTax - valueWithoutTax) * multiplier) / 100;
+            total = Math.round(valueWithTax * multiplier) / 100;
+          } else {
+            // Fallback: compute from revised items
+            subtotal = revisedItems.reduce((s, item) => s + item.total, 0);
+            tax = Math.round(subtotal * 0.1 * 100) / 100; // estimated 10% tax
+            total = Math.round((subtotal + tax) * 100) / 100;
+          }
+
+          // 4. Patch the proposal data with negotiation metadata
+          await sdk.proposals.patchData(proposalUuid, {
+            data: {
+              negotiation_round: round,
+              discount_applied: discountPercent,
+              is_final_offer: isFinalOffer,
+              status: 'negotiating',
+            },
+          });
+        } catch (err) {
+          console.error('Failed to revise proposal via API:', err instanceof Error ? err.message : String(err));
+        }
+      }
 
       return {
         type: 'proposal_draft' as const,
@@ -217,7 +715,7 @@ export function createReviseProposalPricingTool() {
         currency: input.currency,
         recipient: {
           name: input.recipient_name,
-          email: input.recipient_email,
+          email: recipientEmail || input.recipient_email,
           company: input.recipient_company ?? '',
         },
         company_id: input.company_id,
@@ -227,6 +725,8 @@ export function createReviseProposalPricingTool() {
         max_negotiation_rounds: 3,
         discount_applied: discountPercent,
         is_final_offer: isFinalOffer,
+        proposalUuid,
+        proposalUrl,
       };
     },
   });

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import type { ProposalesSDK } from '@proposales/api-client';
+import type { ProposalesSDK, Proposal, ProposalSearchResult } from '@proposales/api-client';
 
 export function createAnalyzePortfolioTool(sdk: ProposalesSDK) {
   return tool({
@@ -18,31 +18,58 @@ export function createAnalyzePortfolioTool(sdk: ProposalesSDK) {
         .describe('What type of analysis to perform'),
     }),
     execute: async ({ analysis_type }) => {
-      const [proposals, content, companies] = await Promise.all([
+      const [searchResult, content, companies] = await Promise.all([
         sdk.proposals.search({}, 25),
         sdk.content.list(),
         sdk.companies.list(),
       ]);
 
-      const proposalList = Array.isArray(proposals.data) ? proposals.data : [proposals.data];
+      const searchItems = Array.isArray(searchResult.data) ? searchResult.data : [searchResult.data];
+
+      // Fetch full proposals to get value data
+      const fetched = await Promise.all(
+        searchItems.map(item =>
+          sdk.proposals.get(item.uuid).then(r => r.data).catch(() => null)
+        )
+      );
+      const fullProposals = fetched.filter((p): p is Proposal => p !== null);
 
       const stats = {
-        total: proposalList.length,
+        total: fullProposals.length,
         byStatus: {} as Record<string, number>,
         totalValue: 0,
+        totalValueWithTax: 0,
         companies: companies.data.length,
         contentItems: content.data.length,
+        currency: fullProposals[0]?.currency ?? 'USD',
       };
 
-      for (const p of proposalList) {
+      for (const p of fullProposals) {
         const status = p.status ?? 'unknown';
         stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
+        stats.totalValue += p.value_without_tax || 0;
+        stats.totalValueWithTax += p.value_with_tax || 0;
       }
 
       return {
         analysis_type,
-        stats,
-        proposals: proposalList,
+        stats: {
+          ...stats,
+          totalValue: Math.round(stats.totalValue / 100),
+          totalValueWithTax: Math.round(stats.totalValueWithTax / 100),
+        },
+        proposals: fullProposals.map(p => ({
+          uuid: p.uuid,
+          title: p.title ?? p.title_md,
+          status: p.status,
+          value_without_tax: p.value_without_tax,
+          value_with_tax: p.value_with_tax,
+          currency: p.currency,
+          recipient_name: p.recipient_name,
+          recipient_company_name: p.recipient_company_name,
+          updated_at: p.updated_at,
+          block_count: p.blocks?.length ?? 0,
+        })),
         content_count: content.data.length,
         company_count: companies.data.length,
       };
@@ -147,7 +174,7 @@ Returns structured data that should be passed directly to renderChart.`,
           'custom',
         ])
         .describe('What data aggregation to perform'),
-      limit: z.number().optional().describe('Max proposals to fetch (default: 50)'),
+      limit: z.number().optional().describe('Max proposals to fetch (not limited by pagination)'),
       group_by: z
         .string()
         .optional()
@@ -157,16 +184,27 @@ Returns structured data that should be passed directly to renderChart.`,
         .optional()
         .describe('For custom queries: metric to compute'),
     }),
-    execute: async ({ query_type, limit, group_by, metric }) => {
-      const proposals = await sdk.proposals.search({}, limit ?? 50);
-      const raw = Array.isArray(proposals.data) ? proposals.data : [proposals.data];
-      // Cast to access fields that may exist on the full API response
-      const list = raw as unknown as Record<string, unknown>[];
+    execute: async ({ query_type, group_by, metric }) => {
+      const needsValues = ['revenue_by_month', 'value_by_company', 'avg_value_by_status', 'custom'].includes(query_type);
+
+      // Search for ALL proposals via fan-out (no pagination cap)
+      const searchItems: ProposalSearchResult[] = await sdk.proposals.searchAll();
+
+      // For queries that need pricing data (value_with_tax, etc.), fetch full proposals
+      let fullProposals: Proposal[] = [];
+      if (needsValues && searchItems.length > 0) {
+        const fetched = await Promise.all(
+          searchItems.map(item =>
+            sdk.proposals.get(item.uuid).then(r => r.data).catch(() => null)
+          )
+        );
+        fullProposals = fetched.filter((p): p is Proposal => p !== null);
+      }
 
       switch (query_type) {
         case 'status_distribution': {
           const counts: Record<string, number> = {};
-          for (const p of list) {
+          for (const p of searchItems) {
             const s = String(p.status ?? 'unknown');
             counts[s] = (counts[s] || 0) + 1;
           }
@@ -174,32 +212,32 @@ Returns structured data that should be passed directly to renderChart.`,
             query_type,
             suggested_chart: 'donut',
             data: Object.entries(counts).map(([name, value]) => ({ name, value })),
-            total: list.length,
+            total: searchItems.length,
           };
         }
 
         case 'revenue_by_month': {
           const monthly: Record<string, number> = {};
-          for (const p of list) {
-            const ts = Number(p.updated_at || p.created_at) || 0;
+          for (const p of fullProposals) {
+            const ts = p.updated_at || 0;
             if (!ts) continue;
             const d = new Date(ts * 1000);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthly[key] = (monthly[key] || 0) + (Number(p.value_without_tax) || 0);
+            monthly[key] = (monthly[key] || 0) + (p.value_without_tax || 0);
           }
           const sorted = Object.entries(monthly).sort(([a], [b]) => a.localeCompare(b));
           return {
             query_type,
             suggested_chart: 'area',
             data: sorted.map(([name, value]) => ({ name, value: Math.round(value / 100) })),
-            currency: String(list[0]?.currency ?? 'USD'),
+            currency: fullProposals[0]?.currency ?? 'USD',
           };
         }
 
         case 'proposal_count_by_month': {
           const monthly: Record<string, number> = {};
-          for (const p of list) {
-            const ts = Number(p.updated_at || p.created_at) || 0;
+          for (const p of searchItems) {
+            const ts = p.updated_at || p.created_at || 0;
             if (!ts) continue;
             const d = new Date(ts * 1000);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -215,9 +253,9 @@ Returns structured data that should be passed directly to renderChart.`,
 
         case 'value_by_company': {
           const companies: Record<string, number> = {};
-          for (const p of list) {
-            const name = String(p.company_name || p.title || 'Unknown');
-            companies[name] = (companies[name] || 0) + (Number(p.value_without_tax) || 0);
+          for (const p of fullProposals) {
+            const name = p.recipient_company_name || p.company_name || p.title || 'Unknown';
+            companies[name] = (companies[name] || 0) + (p.value_without_tax || 0);
           }
           return {
             query_type,
@@ -231,8 +269,8 @@ Returns structured data that should be passed directly to renderChart.`,
 
         case 'win_rate_trend': {
           const monthly: Record<string, { sent: number; won: number }> = {};
-          for (const p of list) {
-            const ts = Number(p.updated_at || p.created_at) || 0;
+          for (const p of searchItems) {
+            const ts = p.updated_at || p.created_at || 0;
             if (!ts) continue;
             const d = new Date(ts * 1000);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -260,10 +298,10 @@ Returns structured data that should be passed directly to renderChart.`,
 
         case 'avg_value_by_status': {
           const groups: Record<string, { total: number; count: number }> = {};
-          for (const p of list) {
+          for (const p of fullProposals) {
             const s = String(p.status ?? 'unknown');
             if (!groups[s]) groups[s] = { total: 0, count: 0 };
-            groups[s].total += Number(p.value_without_tax) || 0;
+            groups[s].total += p.value_without_tax || 0;
             groups[s].count++;
           }
           return {
@@ -278,8 +316,8 @@ Returns structured data that should be passed directly to renderChart.`,
 
         case 'top_companies': {
           const companies: Record<string, number> = {};
-          for (const p of list) {
-            const name = String(p.company_name || p.title || 'Unknown');
+          for (const p of searchItems) {
+            const name = p.title || 'Unknown';
             companies[name] = (companies[name] || 0) + 1;
           }
           return {
@@ -293,9 +331,9 @@ Returns structured data that should be passed directly to renderChart.`,
         }
 
         case 'pipeline_funnel': {
-          const stages = ['draft', 'sent', 'viewed', 'accepted', 'rejected'];
+          const stages = ['draft', 'active', 'accepted', 'rejected', 'expired', 'withdrawn'];
           const counts: Record<string, number> = {};
-          for (const p of list) {
+          for (const p of searchItems) {
             const s = String(p.status ?? 'unknown');
             counts[s] = (counts[s] || 0) + 1;
           }
@@ -309,11 +347,14 @@ Returns structured data that should be passed directly to renderChart.`,
         case 'custom': {
           const field = group_by ?? 'status';
           const groups: Record<string, { count: number; sum: number }> = {};
-          for (const p of list) {
-            const key = String(p[field] ?? 'unknown');
+          // Custom queries use full proposals if value metrics are needed
+          const items = (metric === 'sum_value' || metric === 'avg_value') ? fullProposals : searchItems;
+          for (const p of items) {
+            const rec = p as unknown as Record<string, unknown>;
+            const key = String(rec[field] ?? 'unknown');
             if (!groups[key]) groups[key] = { count: 0, sum: 0 };
             groups[key].count++;
-            groups[key].sum += Number(p.value_without_tax) || 0;
+            groups[key].sum += Number(rec.value_without_tax) || 0;
           }
           const m = metric ?? 'count';
           return {
@@ -349,21 +390,37 @@ export function createSuggestPricingTool(sdk: ProposalesSDK) {
         .describe('The discount percentage the client is requesting'),
     }),
     execute: async ({ proposal_uuid, requested_discount_percent }) => {
-      const proposal = await sdk.proposals.get(proposal_uuid);
-      const p = proposal.data;
+      const result = await sdk.proposals.get(proposal_uuid);
+      const p = result.data;
 
       const totalWithTax = p.value_with_tax;
       const totalWithoutTax = p.value_without_tax;
-      const blockCount = p.blocks.length;
+      const blockCount = p.blocks?.length ?? 0;
+
+      const blocks = (p.blocks ?? []).map(b => ({
+        title: b.title,
+        quantity: b.quantity ?? 1,
+        unit_price_with_tax: (b.unit_value_with_discount_with_tax ?? 0) / 100,
+        unit_price_without_tax: (b.unit_value_with_discount_without_tax ?? 0) / 100,
+        optional: b.optional ?? false,
+        optional_picked: b.optional_picked ?? false,
+      }));
 
       let analysis = {
         current_value_with_tax: totalWithTax,
         current_value_without_tax: totalWithoutTax,
+        current_value_with_tax_display: Math.round(totalWithTax / 100),
+        current_value_without_tax_display: Math.round(totalWithoutTax / 100),
         block_count: blockCount,
+        blocks,
         currency: p.currency,
+        status: p.status,
+        recipient_name: p.recipient_name,
+        recipient_company: p.recipient_company_name,
         requested_discount_percent,
         discount_amount: 0,
         new_total: totalWithoutTax,
+        new_total_display: Math.round(totalWithoutTax / 100),
         recommendation: '',
       };
 

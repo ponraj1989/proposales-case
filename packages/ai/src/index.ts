@@ -2,8 +2,10 @@ import type { ProposalesSDK } from '@proposales/api-client';
 import {
   createSearchProposalsTool,
   createGetProposalTool,
+  createListMyProposalsTool,
   createCreateProposalTool,
   createPatchProposalTool,
+  createReviseProposalTool,
   createGenerateProposalDraftTool,
   createReviseProposalPricingTool,
   createListContentTool,
@@ -13,18 +15,32 @@ import {
   createRenderChartTool,
   createQueryProposalDataTool,
   createSuggestPricingTool,
+  createExtractEventDetailsTool,
+  createAcceptProposalTool,
+  createRequestUserInputTool,
+  createCheckAvailabilityTool,
+  createCalculateEventPriceTool,
+  createGetMonthAvailabilityTool,
+  createSuggestFloorPlanTool,
+  createGenerateImageTool,
+  type SendEsignEmailFn,
+  type PmsService,
 } from './tools';
-export { systemPrompt, salesAdvisorPrompt, proposalWriterPrompt } from './prompts';
+export { systemPrompt, customerPrompt, salesAdvisorPrompt, proposalWriterPrompt } from './prompts';
 export * from './tools';
 
-export function createAllTools(sdk: ProposalesSDK) {
+/** Full tool set for sales users — analytics & data visualization only, no proposal creation */
+export function createAllTools(
+  sdk: ProposalesSDK,
+  userInfo?: { email?: string; name?: string },
+  sendEsignEmail?: SendEsignEmailFn,
+  pmsService?: PmsService,
+) {
   return {
     searchProposals: createSearchProposalsTool(sdk),
     getProposal: createGetProposalTool(sdk),
-    createProposal: createCreateProposalTool(sdk),
     patchProposal: createPatchProposalTool(sdk),
-    generateProposalDraft: createGenerateProposalDraftTool(),
-    reviseProposalPricing: createReviseProposalPricingTool(),
+    reviseProposal: createReviseProposalTool(sdk),
     listContent: createListContentTool(sdk),
     listCompanies: createListCompaniesTool(sdk),
     listTemplates: createListTemplatesTool(sdk),
@@ -32,5 +48,34 @@ export function createAllTools(sdk: ProposalesSDK) {
     renderChart: createRenderChartTool(),
     queryProposalData: createQueryProposalDataTool(sdk),
     suggestPricing: createSuggestPricingTool(sdk),
+    checkAvailability: createCheckAvailabilityTool(pmsService),
+    calculateEventPrice: createCalculateEventPriceTool(pmsService),
+    getMonthAvailability: createGetMonthAvailabilityTool(pmsService),
+    suggestFloorPlan: createSuggestFloorPlanTool(pmsService),
+    generateImage: createGenerateImageTool(),
+  };
+}
+
+/** Minimal tool set for customer users (event booking only) */
+export function createCustomerTools(
+  sdk: ProposalesSDK,
+  userInfo?: { email?: string; name?: string },
+  _sendEsignEmail?: SendEsignEmailFn,
+  pmsService?: PmsService,
+) {
+  return {
+    listMyProposals: createListMyProposalsTool(sdk, userInfo),
+    listContent: createListContentTool(sdk),
+    extractEventDetails: createExtractEventDetailsTool(),
+    generateProposalDraft: createGenerateProposalDraftTool(sdk, userInfo),
+    reviseProposalPricing: createReviseProposalPricingTool(sdk, userInfo),
+    reviseProposal: createReviseProposalTool(sdk),
+    acceptProposal: createAcceptProposalTool(sdk, userInfo),
+    checkAvailability: createCheckAvailabilityTool(pmsService),
+    calculateEventPrice: createCalculateEventPriceTool(pmsService),
+    getMonthAvailability: createGetMonthAvailabilityTool(pmsService),
+    suggestFloorPlan: createSuggestFloorPlanTool(pmsService),
+    requestUserInput: createRequestUserInputTool(),
+    generateImage: createGenerateImageTool(),
   };
 }
