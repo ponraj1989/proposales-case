@@ -1872,6 +1872,18 @@ function InputCard({
   disabled: boolean;
   onSubmit: (values: Record<string, string>) => void;
 }) {
+  const requestResetKey = useMemo(() => JSON.stringify({
+    title: request.title,
+    description: request.description ?? '',
+    fields: request.fields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      required: !!field.required,
+      defaultValue: field.default_value ?? '',
+      options: (field.options ?? []).map((option) => ({ value: option.value, label: option.label })),
+    })),
+  }), [request.description, request.fields, request.title]);
+
   const initialValues = useMemo(() => {
     const values: Record<string, string> = {};
     for (const field of request.fields) {
@@ -1884,13 +1896,13 @@ function InputCard({
       }
     }
     return values;
-  }, [request.fields]);
+  }, [requestResetKey, request.fields]);
 
   const [values, setValues] = useState<Record<string, string>>(initialValues);
 
   useEffect(() => {
     setValues(initialValues);
-  }, [initialValues]);
+  }, [requestResetKey, initialValues]);
 
   const missingRequired = request.fields.some((field) => field.required && !values[field.name]?.trim());
 
@@ -3236,28 +3248,77 @@ function isRenderableMessage(message: UIMessage): boolean {
   });
 }
 
+function findQuickRepliesStartIndex(text: string, startMarker: string): number {
+  const fullMatchIndex = text.indexOf(startMarker);
+  if (fullMatchIndex >= 0) {
+    return fullMatchIndex;
+  }
+
+  const scanStart = Math.max(0, text.length - startMarker.length + 1);
+  for (let index = scanStart; index < text.length; index += 1) {
+    const suffix = text.slice(index);
+    if (startMarker.startsWith(suffix)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function extractQuickReplies(text: string): { content: string; quickReplies: { label: string; message: string }[] } {
-  const match = text.match(/\[QUICK_REPLIES\]([\s\S]*?)\[\/QUICK_REPLIES\]/);
-  if (!match) {
+  const startMarker = '[QUICK_REPLIES]';
+  const endMarker = '[/QUICK_REPLIES]';
+  const quickRepliesStart = findQuickRepliesStartIndex(text, startMarker);
+
+  if (quickRepliesStart < 0) {
     return { content: text, quickReplies: [] };
   }
 
-  const quickReplies = match[1]
+  const quickRepliesEnd = text.indexOf(endMarker, quickRepliesStart + startMarker.length);
+  const content = (
+    quickRepliesEnd >= 0
+      ? text.slice(0, quickRepliesStart) + text.slice(quickRepliesEnd + endMarker.length)
+      : text.slice(0, quickRepliesStart)
+  )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (quickRepliesEnd < 0) {
+    return { content, quickReplies: [] };
+  }
+
+  const block = text.slice(quickRepliesStart + startMarker.length, quickRepliesEnd);
+  const seenReplies = new Set<string>();
+  const quickReplies = block
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.replace(/^[-*]\s*/, ''))
+    .map((line) => line.replace(/^[-*\d.()]+\s*/, ''))
     .map((line) => {
-      const parts = line.split('::').map((part) => part.trim());
-      if (parts.length >= 2) {
-        return { label: parts[0], message: parts.slice(1).join('::') };
+      const separatorIndex = line.indexOf('::');
+      if (separatorIndex < 0) {
+        return { label: line, message: line };
       }
-      return { label: line, message: line };
+
+      const label = line.slice(0, separatorIndex).trim();
+      const message = line.slice(separatorIndex + 2).trim();
+      return { label, message };
     })
-    .filter((reply) => reply.label && reply.message)
+    .map((reply) => ({
+      label: reply.label.replace(/^['\"]|['\"]$/g, '').trim(),
+      message: reply.message.replace(/^['\"]|['\"]$/g, '').trim(),
+    }))
+    .filter((reply) => reply.label.length > 0 && reply.message.length > 0)
+    .filter((reply) => {
+      const key = `${reply.label.toLowerCase()}::${reply.message.toLowerCase()}`;
+      if (seenReplies.has(key)) {
+        return false;
+      }
+      seenReplies.add(key);
+      return true;
+    })
     .slice(0, 4);
 
-  const content = text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
   return { content, quickReplies };
 }
 
