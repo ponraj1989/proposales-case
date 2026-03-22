@@ -1,17 +1,91 @@
 # Proposales Platform
 
-A professional proposal management platform built with **Next.js 14**, **Turborepo**, and the **Proposales API**, featuring AI-powered sales assistant capabilities via **Vercel AI SDK**.
+A professional proposal management platform built with **Next.js 15**, **Turborepo**, and the **Proposales API**, featuring an AI-powered sales assistant, real-time activity feed, guest proposal portal, and mock PMS integration.
 
-## Architecture
+---
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Browser (React 19)                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ Sales        │  │ AI Chat      │  │ Guest Portal             │  │
+│  │ Dashboard    │  │ (streaming)  │  │ (My Proposals)           │  │
+│  │ + Activity   │  │             │  │ (20s SWR polling)        │  │
+│  │   Feed (SSE) │  │             │  │                          │  │
+│  └──────┬───────┘  └──────┬───────┘  └────────────┬─────────────┘  │
+└─────────┼─────────────────┼───────────────────────┼────────────────┘
+          │ SSE             │ stream                │ SWR fetch
+          ▼                 ▼                       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Next.js 15 App (App Router)                     │
+│                                                                     │
+│  ┌─────────────────────┐   ┌────────────────────────────────────┐  │
+│  │ /api/activity-feed  │   │ /api/ai/chat                       │  │
+│  │   /stream  (SSE)    │   │  streamText → gateway(AI_MODEL)    │  │
+│  │   GET (poll + sync) │   │  onFinish → saveMessages()         │  │
+│  └──────────┬──────────┘   └──────────────────┬─────────────────┘  │
+│             │                                 │                     │
+│  ┌──────────▼──────────┐   ┌──────────────────▼─────────────────┐  │
+│  │ /api/webhooks/      │   │ /api/my-proposals                  │  │
+│  │   proposales        │◄──│  (merges MongoDB + Proposales API) │  │
+│  │ (external webhook   │   └────────────────────────────────────┘  │
+│  │  from Proposales    │                                           │
+│  │  SaaS platform)     │   ┌────────────────────────────────────┐  │
+│  └──────────┬──────────┘   │ /api/mock-pms/*                    │  │
+│             │              │  (venue / availability / book)     │  │
+│             │              └──────────────────┬─────────────────┘  │
+└─────────────┼────────────────────────────────┼────────────────────┘
+              │                                 │
+     ┌────────▼──────────┐          ┌───────────▼──────────┐
+     │       Redis        │          │       MongoDB         │
+     │  (ioredis)         │          │  (Mongoose)           │
+     │                   │          │                       │
+     │ conv:<id>         │          │ Conversation          │
+     │ msgs:<id>         │          │ UserProposal          │
+     │ user_convs:<uid>  │          │ User                  │
+     │ activity:feed     │          │ PmsSpace              │
+     │ activity:feed:    │          │ PmsInventory          │
+     │   events (pub/sub)│          │ PmsHold               │
+     │ activity:feed:    │          │ EmailLog              │
+     │   seen (dedup SET)│          │ Event / Booking       │
+     │ rate:<key>        │          └───────────────────────┘
+     └───────────────────┘
+              ▲
+              │ pub/sub
+              │
+     ┌────────┴──────────┐
+     │  Proposales SaaS  │
+     │  API              │
+     │                   │
+     │  proposals.*      │──── POST /api/webhooks/proposales ──►
+     │  (external)       │         (proposal.viewed/sent/
+     └───────────────────┘          signed/status_changed)
+```
+
+---
+
+## Monorepo Structure
 
 ```
 proposales-platform/
 ├── apps/
-│   └── web/                   # Next.js 14 App (App Router)
+│   └── web/                   # Next.js 15 App (App Router)
+│       ├── app/api/           # All API route handlers
+│       │   ├── ai/            # chat streaming + conversations
+│       │   ├── activity-feed/ # SSE stream + polling endpoint
+│       │   ├── webhooks/      # External Proposales webhook receiver
+│       │   ├── proposales/    # Proxy routes (proposals, companies, content…)
+│       │   ├── mock-pms/      # Mock PMS (venue, availability, booking)
+│       │   ├── my-proposals/  # Guest proposal list
+│       │   └── auth/          # NextAuth.js + passkey auth
+│       ├── app/dashboard/     # All dashboard pages
+│       └── lib/               # redis, mongodb, auth, hooks, chat-store…
 ├── packages/
 │   ├── api-client/            # Typed Proposales API client + Zod validation
 │   ├── ui/                    # Shared UI components (shadcn-inspired)
-│   ├── ai/                    # AI tools, prompts, and tool registry
+│   ├── ai/                    # AI tools, prompts, tool registry, bookSpace()
 │   ├── theme/                 # Design tokens & Tailwind preset
 │   └── config/                # Shared TypeScript configs
 ├── turbo.json                 # Turborepo pipeline config
@@ -19,35 +93,114 @@ proposales-platform/
 └── .env.example               # Required environment variables
 ```
 
+---
+
 ## Features
 
+### Sales Dashboard
 - **Dashboard** — KPIs, pipeline value, status distribution, recent proposals
 - **Proposals** — Full CRUD, search, filter by status, detail view with blocks/signatures/tracking
 - **Content Library** — Create, edit, delete, bulk archive, and restore reusable content blocks
 - **Companies** — List companies and view their templates
-- **Analytics** — Pipeline funnel, status donut chart, monthly trends, performance metrics, improvement suggestions
-- **AI Sales Assistant** — Chat interface powered by Vercel AI SDK with tool-calling capabilities:
-  - Create & edit proposals conversationally
-  - Analyze sales pipeline & win rates
-  - Negotiate pricing with margin-aware suggestions
-  - Generate proposal content
-  - Provide actionable improvement recommendations
-  - Browser voice mode: speech-to-text input
-- **Session-Based Conversation Persistence** — AI conversations are stored in Redis and reloaded per authenticated user session
+- **Analytics** — Pipeline funnel, status donut chart, monthly trends, performance metrics
+- **Real-Time Activity Feed** — Bell icon with unread badge; live events delivered via SSE (Server-Sent Events), seeded from Proposales webhooks and API polling
+
+### AI Sales Assistant
+- Chat interface powered by **Vercel AI SDK v6** with tool-calling (`streamText`, `gateway`)
+- Role-aware: `sales` users get full tool set (create proposal, analyze pipeline, book space…); `customer` users get read-only tools
+- Up to 15 tool-call steps per message turn
+- Persistent multi-conversation history (stored Redis + MongoDB per user)
+- Browser voice mode: speech-to-text input
+
+### Guest Portal
+- **My Proposals** page — lists all proposals for the authenticated guest
+- Merges local `UserProposal` records with live Proposales API data
+- Auto-refreshes every 20 seconds via SWR `mutate` + `setInterval`
+- Visual status tracker: Draft → Sent → Viewed → Signed (+ terminal states)
+
+### Proposales Webhook Integration
+- `POST /api/webhooks/proposales` receives **external events from the Proposales SaaS platform**
+- Register your deployment URL in the Proposales dashboard → Webhook Settings
+- Handles: `proposal.viewed`, `proposal.sent`, `proposal.signed`, `proposal.status_changed`
+- On each event: pushes to Redis activity feed, updates `UserProposal` in MongoDB, auto-books mock PMS on acceptance
+- **No internal webhooks** are used between services in this app — all cross-service calls are direct function calls
+
+### Mock PMS (Property Management System)
+- In-memory venue/space/inventory simulation
+- Endpoints: `/api/mock-pms/venue`, `/api/mock-pms/availability`, `/api/mock-pms/calendar`, `/api/mock-pms/book`
+- Auto-booked via webhook when a proposal is e-signed/accepted
+
+---
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 14 (App Router, RSC, Server Actions) |
+| Framework | Next.js 15 (App Router, RSC) |
+| Language | TypeScript 5, React 19 |
 | Monorepo | Turborepo |
 | Styling | Tailwind CSS + custom Proposales theme |
-| UI | Custom component library (shadcn-inspired) |
-| API Client | Typed SDK with Zod validation |
-| AI | Vercel AI SDK + OpenAI (tool-calling) |
-| Auth | Google OAuth (NextAuth.js) + API key fallback |
-| Rate Limiting + Chat Storage | Redis (session-scoped conversation persistence) |
+| UI | Custom component library (`@proposales/ui`, shadcn-inspired) |
+| API Client | `@proposales/api-client` — typed SDK with Zod validation |
+| AI | Vercel AI SDK v6 (`ai`) — `streamText`, `gateway`, multi-step tool calls |
+| AI Model | Configurable via `AI_MODEL` env var, defaults to `openai/gpt-4o` |
+| Auth | Google OAuth (NextAuth.js v4) + plaintext passkeys + legacy SHA-256 API keys |
+| Role System | `sales` (full tools + activity feed) vs `customer` (read-only + my proposals) |
+| Cache / Pub-Sub | Redis via `ioredis` — chat cache, activity feed list + pub/sub channel |
+| Database | MongoDB via Mongoose — conversations, users, proposals, PMS, email logs |
+| Real-Time Push | SSE (`EventSource`) — activity feed stream for sales users |
+| External Webhooks | Proposales SaaS → `POST /api/webhooks/proposales` (no signature verification) |
+| Rate Limiting | Redis-based sliding window (`lib/rate-limiter.ts`) |
 | Deployment | Vercel |
+
+---
+
+## Data Flow: Chat Conversations
+
+```
+User sends message
+      │
+      ▼
+POST /api/ai/chat
+  │  Auth + rate limit check
+  │  Resolve role → select tool set
+  │  Build system prompt
+  │  streamText({ model: gateway(AI_MODEL), tools, stopWhen: stepCountIs(15) })
+  │       │
+  │       ├── onStepFinish → pushActivityFeedEvent (sales only)
+  │       │               → upsert UserProposal in MongoDB
+  │       │
+  │       └── onFinish → saveMessages(conversationId, allMessages)
+  │                           ├── MongoDB first (source of truth)
+  │                           └── Redis second (cache: msgs:<id>)
+  │
+  └── toUIMessageStreamResponse() → browser streams tokens live
+```
+
+## Data Flow: Activity Feed
+
+```
+Source 1 — Proposales Webhooks (real-time):
+  Proposales SaaS ──POST──► /api/webhooks/proposales
+                              └─► pushActivityFeedEvent()
+                                    ├── Redis LPUSH activity:feed
+                                    ├── Redis LTRIM (keep last 200)
+                                    ├── Redis PUBLISH activity:feed:events
+                                    └── Redis SADD activity:feed:seen (dedup)
+
+Source 2 — Background API Sync (once/min):
+  GET /api/activity-feed
+    └─► refreshFromProposals() [background, debounced 60s]
+          └─► sdk.proposals.searchAll() → pushIfNew() for each event type
+
+Delivery to browser:
+  GET /api/activity-feed/stream (SSE)
+    └─► Redis SUBSCRIBE activity:feed:events
+          └─► event: activity\ndata:{...} → EventSource in layout.tsx
+                └─► mutateActivityRef(prev => prepend) [no revalidate]
+```
+
+---
 
 ## Getting Started
 
@@ -55,6 +208,8 @@ proposales-platform/
 
 - Node.js >= 20
 - npm >= 10
+- Redis instance (`redis://...` URL)
+- MongoDB instance (`mongodb://...` URI)
 
 ### Setup
 
@@ -78,23 +233,29 @@ cp .env.example .env.local
 ```
 
 Fill in:
-- `PROPOSALES_API_URL` — Your Proposales API base URL
-- `PROPOSALES_API_TOKEN` — Your Proposales API bearer token
-- `AUTHORIZED_KEYS` — Comma-separated SHA-256 hashes of authorized login keys
+- `PROPOSALES_API_URL` — Proposales API base URL (e.g. `https://api.proposales.com`)
+- `PROPOSALES_API_TOKEN` — Proposales API bearer token
+- `PROPOSALES_INBOX_TOKEN` — Token for guest inbox e-sign email links
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google OAuth credentials (see below)
 - `NEXTAUTH_SECRET` — Random secret for NextAuth.js JWT encryption
 - `NEXTAUTH_URL` — Your app URL (`http://localhost:3000` for local dev)
 - `ALLOWED_EMAILS` — (Optional) Comma-separated emails allowed to sign in via Google
-- `ALLOWED_DOMAINS` — (Optional) Comma-separated domains allowed (e.g., `yourcompany.com`)
-- `REDIS_URL` — Redis connection URL (used for rate limiting and AI conversation storage)
-- `OPENAI_API_KEY` — OpenAI API key (for AI features)
+- `ALLOWED_DOMAINS` — (Optional) Comma-separated domains allowed (e.g. `yourcompany.com`)
+- `SALES_EMAILS` — Comma-separated emails that get the `sales` role on Google sign-in
+- `SALES_PASSKEY_1` — Plaintext passkey that grants `sales` role (direct login)
+- `USER_PASSKEY_1` — Plaintext passkey that grants `customer` role (direct login)
+- `AUTHORIZED_KEYS` — (Legacy) Comma-separated SHA-256 hashes of authorized API keys
+- `REDIS_URL` — Redis connection URL (`redis://localhost:6379` or managed Redis)
+- `MONGODB_URI` — MongoDB connection URI (`mongodb://localhost:27017/proposales`)
+- `OPENAI_API_KEY` — OpenAI API key (used when `AI_MODEL` starts with `openai/`)
+- `AI_MODEL` — (Optional) AI model string, defaults to `openai/gpt-4o`
 
 **Generate NEXTAUTH_SECRET:**
 ```bash
 openssl rand -base64 32
 ```
 
-**To generate an API key hash:**
+**To generate an API key hash (legacy):**
 ```bash
 echo -n "your-api-key" | sha256sum
 ```
@@ -112,6 +273,17 @@ echo -n "your-api-key" | sha256sum
 7. Copy the Client ID and Client Secret to your `.env.local`
 
 > **Access Control**: If `ALLOWED_EMAILS` and `ALLOWED_DOMAINS` are both empty, all Google accounts can sign in. Set one or both to restrict access.
+> **Role assignment**: Add a user's email to `SALES_EMAILS` to grant them the `sales` role on Google sign-in. All other authenticated users receive the `customer` role.
+
+### Webhook Setup (Proposales SaaS)
+
+To receive real-time proposal events from the Proposales platform:
+
+1. Deploy the app so it has a public URL
+2. In the Proposales dashboard → **Settings → Webhooks**, add:
+   - URL: `https://your-domain.com/api/webhooks/proposales`
+   - Events: `proposal.viewed`, `proposal.sent`, `proposal.signed`, `proposal.status_changed`
+3. The endpoint accepts any POST — there is currently no HMAC signature verification
 
 4. **Start development server**
 
@@ -158,14 +330,16 @@ The `vercel.json` already configures:
 
 ## Security
 
-- **Authentication**: Dual auth — Google OAuth (NextAuth.js) and SHA-256 API key with timing-safe equality
-- **Session**: JWT-based (Google OAuth) + httpOnly, secure, sameSite=strict cookies (API key)
-- **Access Control**: Optional email/domain whitelisting for Google sign-in
-- **Rate Limiting**: Upstash Redis-based (60 req/min API, 20 req/min AI)
-- **Conversation Persistence**: Redis-backed, session-scoped conversation storage and retrieval
-- **API Proxy**: All Proposales API calls proxied through server — token never exposed to client
+- **Authentication**: Three auth methods — Google OAuth (NextAuth.js), plaintext passkeys (`SALES_PASSKEY_1` / `USER_PASSKEY_1`), and legacy SHA-256 API key hashes (`AUTHORIZED_KEYS`)
+- **Session**: JWT-based (Google OAuth) + httpOnly, secure, sameSite=strict cookies (passkey/API key)
+- **Access Control**: Optional email/domain whitelisting for Google sign-in; role (`sales`/`customer`) enforced server-side on every API route
+- **Rate Limiting**: Redis sliding-window rate limiter (60 req/min API, 20 req/min AI)
+- **Conversation Persistence**: Redis cache + MongoDB source-of-truth — scoped per authenticated user ID
+- **API Proxy**: All Proposales API calls proxied through the server — token never exposed to the browser
 - **CSP Headers**: Strict Content-Security-Policy applied to all routes
 - **Input Validation**: Zod schemas validate all API inputs server-side
+- **Timing-Safe Comparison**: API key hash comparison uses `crypto.timingSafeEqual` to prevent timing attacks
+- **Webhook Security Note**: `POST /api/webhooks/proposales` has no HMAC signature verification — consider adding one if the endpoint is internet-facing in production
 
 ## License
 

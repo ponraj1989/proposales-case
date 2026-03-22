@@ -290,6 +290,7 @@ export default function AIAssistantPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [input, setInput] = useState('');
   const [chatMode, setChatMode] = useState<'conversation' | 'form'>('conversation');
+  const [streamStalled, setStreamStalled] = useState(false);
   const [language] = useState(() => {
     if (typeof window !== 'undefined') {
       const browserLang = navigator.language?.split('-')[0];
@@ -313,6 +314,7 @@ export default function AIAssistantPage() {
     sendMessage,
     status,
     setMessages,
+    stop,
   } = useChat({
     id: activeConvId,
     transport: new DefaultChatTransport({
@@ -320,12 +322,33 @@ export default function AIAssistantPage() {
       body: { conversationId: activeConvId, language },
     }),
     messages: activeConversation?.messages ?? [],
+    onError() {
+      setStreamStalled(true);
+    },
     onFinish() {
+      setStreamStalled(false);
       // no-op: source of truth is server conversation state
     },
   });
 
   const isLoading = status === 'streaming' || status === 'submitted';
+
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    clearTimeout(streamTimeoutRef.current);
+
+    if (isLoading) {
+      setStreamStalled(false);
+      streamTimeoutRef.current = setTimeout(() => {
+        stop();
+        setStreamStalled(true);
+      }, 45_000);
+    } else {
+      setStreamStalled(false);
+    }
+
+    return () => clearTimeout(streamTimeoutRef.current);
+  }, [isLoading, stop]);
 
   const acceptedDraftKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -582,42 +605,59 @@ export default function AIAssistantPage() {
   }, [sendMessage]);
 
   const handleFormSubmit = useCallback((formData: EventFormData) => {
-    const parts: string[] = [];
-    parts.push(`I'd like to book a ${formData.eventType}`);
-    if (formData.selectedSpace) {
-      parts.push(`at ${formData.selectedSpace.space_name} (${formData.selectedSpace.space_type}, ${formData.selectedSpace.time_slot}, capacity ${formData.selectedSpace.capacity}, space_id: ${formData.selectedSpace.space_id})`);
-    } else if (formData.venue) {
-      parts.push(`at the ${formData.venue}`);
-    }
-    parts.push(`on ${formData.date}`);
-    if (formData.time) parts.push(`(${formData.time})`);
-    parts.push(`for ${formData.guests} guests`);
-    if (formData.setupType) parts.push(`with ${formData.setupType} setup`);
-    if (formData.budget) parts.push(`and a budget of €${formData.budget}`);
+    const normalizedGuests = Number.parseInt(formData.guests || '0', 10);
+    const selectedItems = formData.selectedItems.map((item) => ({
+      variation_id: item.variation_id,
+      title: item.title,
+      quantity: item.quantity,
+      unit_type: item.unit_type,
+      price_cents: item.price_cents,
+    }));
 
-    // Include specifically selected items with variation_ids and quantities
-    if (formData.selectedItems.length > 0) {
-      const itemLines = formData.selectedItems.map((si) =>
-        `- ${si.title} (variation_id: ${si.variation_id}, qty: ${si.quantity}, €${(si.price_cents / 100).toFixed(0)}/${si.unit_type})`,
-      );
-      parts.push(`.\n\nSelected items for the proposal:\n${itemLines.join('\n')}`);
-    } else {
-      // Fallback to generic add-on names
-      const extras: string[] = [];
-      if (formData.catering) extras.push('catering/food service');
-      if (formData.av) extras.push('AV equipment (projector, sound system)');
-      if (formData.accommodation) extras.push('overnight accommodation for guests');
-      if (formData.decoration) extras.push('venue decoration');
-      if (formData.transportation) extras.push('transportation');
-      if (extras.length > 0) parts.push(`. I'll also need ${extras.join(', ')}`);
-    }
+    const extras: string[] = [];
+    if (formData.catering) extras.push('catering/food service');
+    if (formData.av) extras.push('AV equipment (projector, sound system)');
+    if (formData.accommodation) extras.push('overnight accommodation for guests');
+    if (formData.decoration) extras.push('venue decoration');
+    if (formData.transportation) extras.push('transportation');
 
-    if (formData.name) parts.push(`. My name is ${formData.name}`);
-    if (formData.email) parts.push(`and my email is ${formData.email}`);
-    if (formData.notes) parts.push(`. Additional notes: ${formData.notes}`);
+    const submission = {
+      event_type: formData.eventType,
+      event_date: formData.date,
+      guests: Number.isFinite(normalizedGuests) ? normalizedGuests : formData.guests,
+      time_slot: formData.time || undefined,
+      venue_type: formData.venue || undefined,
+      setup_type: formData.setupType || undefined,
+      budget_eur: formData.budget ? Number.parseFloat(formData.budget) : undefined,
+      notes: formData.notes || undefined,
+      contact_name: formData.name || undefined,
+      contact_email: formData.email || undefined,
+      selected_space: formData.selectedSpace
+        ? {
+          space_id: formData.selectedSpace.space_id,
+          space_name: formData.selectedSpace.space_name,
+          space_type: formData.selectedSpace.space_type,
+          time_slot_id: formData.selectedSpace.time_slot_id,
+          time_slot: formData.selectedSpace.time_slot,
+          capacity: formData.selectedSpace.capacity,
+        }
+        : undefined,
+      selected_items: selectedItems.length > 0 ? selectedItems : undefined,
+      requested_extras: selectedItems.length === 0 && extras.length > 0 ? extras : undefined,
+    };
 
-    const message = parts.join(' ') + '.';
-    sendMessage({ text: message });
+    const instructions = [
+      '[FORM_SUBMISSION]',
+      'The booking form is already completed with event type, date, and guests.',
+      'Do NOT call requestUserInput again.',
+      formData.selectedSpace
+        ? 'Use selected_space directly. Only call checkAvailability if you need to validate or suggest alternatives.'
+        : 'Call checkAvailability next and suggest best-fit spaces.',
+      'Then generateProposalDraft using selected_items (variation_id + quantity) when provided.',
+      `FORM_DATA: ${JSON.stringify(submission)}`,
+    ];
+
+    sendMessage({ text: instructions.join('\n') });
     setChatMode('conversation');
   }, [sendMessage]);
 
@@ -878,6 +918,11 @@ export default function AIAssistantPage() {
               <p className="mt-2 text-center text-[0.65rem] text-gray-400">
                 AI can make mistakes. Always double-check proposals before sending — even robots need a proofreader! 🤖
               </p>
+              {streamStalled && (
+                <p className="mt-1 text-center text-[0.7rem] text-amber-600">
+                  Response timed out. Please send again to continue.
+                </p>
+              )}
             </div>
           </>
         )}
@@ -1872,6 +1917,18 @@ function InputCard({
   disabled: boolean;
   onSubmit: (values: Record<string, string>) => void;
 }) {
+  const requestResetKey = useMemo(() => JSON.stringify({
+    title: request.title,
+    description: request.description ?? '',
+    fields: request.fields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      required: !!field.required,
+      defaultValue: field.default_value ?? '',
+      options: (field.options ?? []).map((option) => ({ value: option.value, label: option.label })),
+    })),
+  }), [request.description, request.fields, request.title]);
+
   const initialValues = useMemo(() => {
     const values: Record<string, string> = {};
     for (const field of request.fields) {
@@ -1884,13 +1941,13 @@ function InputCard({
       }
     }
     return values;
-  }, [request.fields]);
+  }, [requestResetKey, request.fields]);
 
   const [values, setValues] = useState<Record<string, string>>(initialValues);
 
   useEffect(() => {
     setValues(initialValues);
-  }, [initialValues]);
+  }, [requestResetKey, initialValues]);
 
   const missingRequired = request.fields.some((field) => field.required && !values[field.name]?.trim());
 
@@ -2035,21 +2092,25 @@ function ChatMessage({
 
     if (part.type === 'dynamic-tool') {
       // Flat structure: { type, toolName, toolCallId, state, output }
-      toolParts.push(part as unknown as ToolPart);
-    } else if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
-      // Named tool: { type: 'tool-<name>', toolCallId, state, output }
-      toolParts.push(part as unknown as ToolPart);
+      const p = part as unknown as ToolPart;
+      toolParts.push({ ...p, state: p.state === 'result' ? 'output-available' : p.state });
     } else if (part.type === 'tool-invocation' && 'toolInvocation' in part) {
-      // Nested structure: { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, state, result } }
+      // Nested structure from useChat: { type: 'tool-invocation', toolInvocation: { toolName, state: 'result', result } }
+      // ⚠️ Must come BEFORE the startsWith('tool-') check below — 'tool-invocation' also starts with 'tool-'
       const inv = (part as any).toolInvocation;
       toolParts.push({
-        type: String(part.type),
+        type: 'tool-invocation',
         toolName: inv.toolName ?? '',
         toolCallId: inv.toolCallId ?? '',
-        state: inv.state === 'result' ? 'output-available' : inv.state,
+        state: inv.state === 'result' ? 'output-available' : (inv.state ?? 'call'),
         input: inv.args,
         output: inv.result,
       });
+    } else if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
+      // Flat tool parts from saved messages: { type: 'tool-invocation', toolName, state: 'result', output }
+      // Map 'result' → 'output-available' so the Thinking indicator hides correctly
+      const p = part as unknown as ToolPart;
+      toolParts.push({ ...p, state: p.state === 'result' ? 'output-available' : p.state });
     }
   }
 
@@ -3236,28 +3297,77 @@ function isRenderableMessage(message: UIMessage): boolean {
   });
 }
 
+function findQuickRepliesStartIndex(text: string, startMarker: string): number {
+  const fullMatchIndex = text.indexOf(startMarker);
+  if (fullMatchIndex >= 0) {
+    return fullMatchIndex;
+  }
+
+  const scanStart = Math.max(0, text.length - startMarker.length + 1);
+  for (let index = scanStart; index < text.length; index += 1) {
+    const suffix = text.slice(index);
+    if (startMarker.startsWith(suffix)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function extractQuickReplies(text: string): { content: string; quickReplies: { label: string; message: string }[] } {
-  const match = text.match(/\[QUICK_REPLIES\]([\s\S]*?)\[\/QUICK_REPLIES\]/);
-  if (!match) {
+  const startMarker = '[QUICK_REPLIES]';
+  const endMarker = '[/QUICK_REPLIES]';
+  const quickRepliesStart = findQuickRepliesStartIndex(text, startMarker);
+
+  if (quickRepliesStart < 0) {
     return { content: text, quickReplies: [] };
   }
 
-  const quickReplies = match[1]
+  const quickRepliesEnd = text.indexOf(endMarker, quickRepliesStart + startMarker.length);
+  const content = (
+    quickRepliesEnd >= 0
+      ? text.slice(0, quickRepliesStart) + text.slice(quickRepliesEnd + endMarker.length)
+      : text.slice(0, quickRepliesStart)
+  )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (quickRepliesEnd < 0) {
+    return { content, quickReplies: [] };
+  }
+
+  const block = text.slice(quickRepliesStart + startMarker.length, quickRepliesEnd);
+  const seenReplies = new Set<string>();
+  const quickReplies = block
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.replace(/^[-*]\s*/, ''))
+    .map((line) => line.replace(/^[-*\d.()]+\s*/, ''))
     .map((line) => {
-      const parts = line.split('::').map((part) => part.trim());
-      if (parts.length >= 2) {
-        return { label: parts[0], message: parts.slice(1).join('::') };
+      const separatorIndex = line.indexOf('::');
+      if (separatorIndex < 0) {
+        return { label: line, message: line };
       }
-      return { label: line, message: line };
+
+      const label = line.slice(0, separatorIndex).trim();
+      const message = line.slice(separatorIndex + 2).trim();
+      return { label, message };
     })
-    .filter((reply) => reply.label && reply.message)
+    .map((reply) => ({
+      label: reply.label.replace(/^['\"]|['\"]$/g, '').trim(),
+      message: reply.message.replace(/^['\"]|['\"]$/g, '').trim(),
+    }))
+    .filter((reply) => reply.label.length > 0 && reply.message.length > 0)
+    .filter((reply) => {
+      const key = `${reply.label.toLowerCase()}::${reply.message.toLowerCase()}`;
+      if (seenReplies.has(key)) {
+        return false;
+      }
+      seenReplies.add(key);
+      return true;
+    })
     .slice(0, 4);
 
-  const content = text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
   return { content, quickReplies };
 }
 

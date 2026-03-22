@@ -132,7 +132,7 @@ export async function POST(request: Request) {
                       eventDate: bookingDetails?.event_date || undefined,
                       guests: bookingDetails?.guests || undefined,
                     },
-                    { upsert: true, new: true },
+                    { upsert: true, returnDocument: 'after' },
                   );
                 } catch (err) {
                   console.error('Failed to save UserProposal on accept:', err instanceof Error ? err.message : String(err));
