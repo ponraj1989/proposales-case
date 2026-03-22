@@ -70,27 +70,6 @@ function AnimatedCounter({
   );
 }
 
-// ─── Mini Chart Components (no recharts dependency for dashboard) ───
-function MiniBar({ data, color }: { data: number[]; color: string }) {
-  const max = Math.max(...data, 1);
-  return (
-    <div className="flex items-end gap-1 h-12">
-      {data.map((v, i) => (
-        <div
-          key={i}
-          className="dash-bar w-3 rounded-t"
-          style={{
-            height: `${(v / max) * 100}%`,
-            backgroundColor: color,
-            minHeight: 2,
-            animationDelay: `${i * 80}ms`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 // ─── Mini Donut (SVG) ───
 function MiniDonut({
   data,
@@ -261,8 +240,6 @@ export function DashboardClient({
     },
   ];
 
-  const statusData = Object.entries(stats.statusCounts).map(([k, v]) => v);
-
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -270,8 +247,8 @@ export function DashboardClient({
         description="Overview of your proposal pipeline and key metrics"
       />
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* KPI Card */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" style={{ animationDelay: '0ms' }}>
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-500">Total Proposals</p>
@@ -285,53 +262,6 @@ export function DashboardClient({
             <AnimatedCounter target={stats.totalProposals} />
           </p>
           <p className="mt-1 text-sm text-gray-500">{stats.activeCount} active, {stats.draftCount} drafts</p>
-        </div>
-
-        <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" style={{ animationDelay: '80ms' }}>
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-500">Pipeline Value</p>
-            <div className="rounded-lg bg-success-50 p-2">
-              <svg className="h-5 w-5 text-success-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-          <p className="mt-2 text-3xl font-bold text-gray-900">
-            <AnimatedCounter target={stats.totalValue} prefix={stats.currency === 'SEK' ? '' : '$'} suffix={stats.currency === 'SEK' ? ' SEK' : ''} />
-          </p>
-          <p className="mt-1 text-sm text-success-600">
-            {stats.acceptedCount} accepted
-          </p>
-        </div>
-
-        <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" style={{ animationDelay: '160ms' }}>
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-500">Win Rate</p>
-            <div className="rounded-lg bg-warning-50 p-2">
-              <svg className="h-5 w-5 text-warning-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M18.75 4.236c.982.143 1.954.317 2.916.52A6.003 6.003 0 0016.27 9.728M18.75 4.236V4.5c0 2.108-.966 3.99-2.48 5.228m0 0a13.507 13.507 0 01-3.032 1.078 13.507 13.507 0 01-3.032-1.078" />
-              </svg>
-            </div>
-          </div>
-          <p className="mt-2 text-3xl font-bold text-gray-900">
-            <AnimatedCounter target={stats.winRate} suffix="%" />
-          </p>
-          <MiniBar data={statusData.length > 0 ? statusData : [0]} color="#4461D7" />
-        </div>
-
-        <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" style={{ animationDelay: '240ms' }}>
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-500">Resources</p>
-            <div className="rounded-lg bg-gray-100 p-2">
-              <svg className="h-5 w-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-              </svg>
-            </div>
-          </div>
-          <p className="mt-2 text-3xl font-bold text-gray-900">
-            <AnimatedCounter target={stats.contentCount} />
-          </p>
-          <p className="mt-1 text-sm text-gray-500">{stats.companyCount} companies</p>
         </div>
       </div>
 

@@ -50,14 +50,18 @@ export async function GET(request: Request) {
       if (text && !filters.text) filters.text = text;
 
       const sdk = getSDK();
-      const searchResult = await sdk.proposals.search(
-        Object.keys(filters).length > 0 ? filters : undefined,
-        limit ? parseInt(limit, 10) : 50,
-      );
+      // Use searchAll to paginate through all pages (Proposales API page size = 25)
+      // Falls back to single-page search with explicit limit if limit param provided
+      const rawItems = limit
+        ? await sdk.proposals.search(
+            Object.keys(filters).length > 0 ? filters : undefined,
+            parseInt(limit, 10),
+          ).then((r) => Array.isArray(r.data) ? r.data : r.data ? [r.data] : [])
+        : await sdk.proposals.searchAll(
+            Object.keys(filters).length > 0 ? filters : undefined,
+          );
 
-      // Enrich search results with full proposal data (value, contact, tracking, etc.)
-      const searchData = searchResult.data;
-      const items: Record<string, unknown>[] = Array.isArray(searchData) ? (searchData as unknown as Record<string, unknown>[]) : searchData ? [searchData as unknown as Record<string, unknown>] : [];
+      const items: Record<string, unknown>[] = rawItems as unknown as Record<string, unknown>[];
 
       const enriched = await Promise.all(
         items.map(async (item) => {

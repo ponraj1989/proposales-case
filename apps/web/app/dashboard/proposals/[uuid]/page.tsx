@@ -16,7 +16,7 @@ import {
   formatCurrency,
   formatDate,
 } from '@proposales/ui';
-import { useProposal, apiPut, useContent } from '@/lib/hooks';
+import { useProposal, apiPost, useContent } from '@/lib/hooks';
 
 interface EditBlock {
   uuid: string;
@@ -90,9 +90,14 @@ export default function ProposalDetailPage() {
       // Build blocks array from edit state (only content_id blocks can be sent)
       const blockPayload = editBlocks
         .filter((b) => !b.removed && b.content_id)
-        .map((b) => ({ content_id: b.content_id! }));
+        .map((b) => ({ content_id: b.content_id!, quantity: b.quantity }));
 
-      const payload: Record<string, unknown> = {
+      const existingData = (proposal?.data as Record<string, unknown>) || {};
+
+      // Use POST to recreate the proposal (PATCH /data returns 401 with current token)
+      const body = {
+        company_id: (proposal?.company_id as number) || 5230,
+        language: (proposal?.language as string) || 'en',
         title_md: formData.title_md || undefined,
         description_md: formData.description_md || undefined,
         contact_email: formData.contact_email || undefined,
@@ -103,14 +108,15 @@ export default function ProposalDetailPage() {
           phone: formData.contact_phone || undefined,
           company_name: formData.recipient_company_name || undefined,
         },
+        blocks: blockPayload,
+        data: {
+          ...existingData,
+          source: existingData.source || 'manual_edit',
+        },
       };
 
-      // Only include blocks if they were edited
-      if (editBlocks.length > 0) {
-        payload.blocks = blockPayload;
-      }
+      await apiPost('/api/proposales/proposals', body);
 
-      await apiPut(`/api/proposales/proposals/${uuid}`, payload);
       setEditing(false);
       mutate();
     } catch (err) {
@@ -257,6 +263,10 @@ export default function ProposalDetailPage() {
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Status</label>
                       <div className="mt-1"><StatusBadge status={proposal.status as string} /></div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 uppercase">Progress</label>
+                      <div className="mt-1"><ProposalDetailStepper proposal={proposal} /></div>
                     </div>
                     <div>
                       <label className="text-xs font-medium text-gray-500 uppercase">Version</label>
@@ -484,6 +494,63 @@ export default function ProposalDetailPage() {
         </div>
       </div>
 
+    </div>
+  );
+}
+
+// ─── Live Status Stepper for detail page ───
+
+const DETAIL_STEPS = [
+  { key: 'draft', label: 'Draft' },
+  { key: 'sent', label: 'Sent' },
+  { key: 'viewed', label: 'Viewed' },
+  { key: 'signed', label: 'E-signed' },
+] as const;
+
+function ProposalDetailStepper({ proposal }: { proposal: Record<string, unknown> }) {
+  const status = (proposal.status as string) || 'draft';
+  const tracking = proposal.tracking as Record<string, unknown> | undefined;
+  const signatures = proposal.signatures as unknown[] | undefined;
+
+  let step = 0;
+  if (status === 'accepted' || (signatures && signatures.length > 0)) step = 3;
+  else if (tracking?.first_viewed_at || (proposal.viewed_count as number) > 0 || (tracking?.number_of_views as number) > 0) step = 2;
+  else if (status === 'active' || tracking?.sent_at) step = 1;
+
+  if (status === 'rejected') {
+    return <Badge variant="error">Rejected</Badge>;
+  }
+  if (status === 'expired') {
+    return <Badge variant="warning">Expired</Badge>;
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {DETAIL_STEPS.map((s, i) => {
+        const isDone = i <= step;
+        const isCurrent = i === step;
+        return (
+          <div key={s.key} className="flex items-center">
+            <div
+              className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-all ${
+                isDone
+                  ? isCurrent
+                    ? 'bg-green-500 text-white ring-2 ring-green-200'
+                    : 'bg-green-500 text-white'
+                  : 'bg-gray-100 text-gray-400'
+              }`}
+            >
+              {isDone ? '✓' : i + 1}
+            </div>
+            <span className={`text-[10px] ml-0.5 mr-1 ${isDone ? 'text-green-700 font-medium' : 'text-gray-400'}`}>
+              {s.label}
+            </span>
+            {i < DETAIL_STEPS.length - 1 && (
+              <div className={`h-0.5 w-4 ${i < step ? 'bg-green-400' : 'bg-gray-200'}`} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

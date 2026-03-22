@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { cn } from '@proposales/ui';
 import { useContent } from '@/lib/hooks';
+import { getContentPrice, formatContentPrice } from '@/lib/content-prices';
 
 // ─── Title-based image mapping for content items ───
 
@@ -302,6 +303,12 @@ export default function PmsPage() {
                         )}
                       </div>
                       {desc && <p className="mt-1 text-xs text-gray-500 line-clamp-2">{String(desc)}</p>}
+                      {(() => {
+                        const price = getContentPrice(String(title));
+                        return price ? (
+                          <p className="mt-2 text-sm font-semibold text-gray-900">{formatContentPrice(price)}</p>
+                        ) : null;
+                      })()}
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {productId ? <span className="rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-600">Product #{String(productId)}</span> : null}
                         {variationId ? <span className="rounded-full bg-purple-50 border border-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-600">Variation #{String(variationId)}</span> : null}

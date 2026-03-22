@@ -120,6 +120,7 @@ const recipientSchema = z.union([
 const blockInputSchema = z.union([
   z.object({
     content_id: z.number(),
+    quantity: z.number().min(1).optional(),
     type: z.enum(['product-block', 'video-block']).optional(),
   }),
   z.object({
@@ -185,6 +186,7 @@ export const updateProposalSchema = z.object({
 export type UpdateProposalInput = z.infer<typeof updateProposalSchema>;
 
 export const patchProposalDataSchema = z.object({
+  uuid: z.string().optional(),
   data: z.record(z.unknown()),
 });
 

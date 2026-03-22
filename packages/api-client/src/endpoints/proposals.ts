@@ -43,5 +43,43 @@ export function proposalsEndpoints(client: ApiClient) {
         params,
       );
     },
+
+    // Fetches ALL proposals by paginating through every page (page size = 25)
+    searchAll: async (filters?: Record<string, string>): Promise<ProposalSearchResult[]> => {
+      const all: ProposalSearchResult[] = [];
+      let page = 1;
+      const pageSize = 25;
+
+      while (true) {
+        const params: Record<string, string> = {
+          'page[number]': String(page),
+          'page[size]': String(pageSize),
+        };
+        if (filters) {
+          for (const [key, value] of Object.entries(filters)) {
+            params[`filter[${key}]`] = value;
+          }
+        }
+
+        const result = await client.get<SingleResponse<ProposalSearchResult | ProposalSearchResult[]>>(
+          '/v3/proposal-search',
+          params,
+        );
+
+        const items = Array.isArray(result.data)
+          ? (result.data as ProposalSearchResult[])
+          : result.data
+            ? [result.data as ProposalSearchResult]
+            : [];
+
+        all.push(...items);
+
+        // If fewer items than page size, we've reached the last page
+        if (items.length < pageSize) break;
+        page++;
+      }
+
+      return all;
+    },
   };
 }

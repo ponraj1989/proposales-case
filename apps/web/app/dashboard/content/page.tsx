@@ -16,6 +16,7 @@ import {
   type Column,
 } from '@proposales/ui';
 import { useContent, useCompanies, apiPost, apiPut, apiDelete } from '@/lib/hooks';
+import { getContentPrice, formatContentPrice } from '@/lib/content-prices';
 
 type ContentItem = {
   product_id?: number;
@@ -267,6 +268,18 @@ export default function ContentPage() {
           </div>
         </div>
       ),
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      render: (item) => {
+        const price = getContentPrice(getLocalizedText(item.title));
+        return price ? (
+          <span className="text-sm font-medium text-gray-900">{formatContentPrice(price)}</span>
+        ) : (
+          <span className="text-sm text-gray-400">—</span>
+        );
+      },
     },
     {
       key: 'is_archived',

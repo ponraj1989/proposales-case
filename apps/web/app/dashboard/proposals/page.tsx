@@ -26,7 +26,7 @@ const KANBAN_COLUMNS = [
   { key: 'draft', label: 'Draft', color: 'bg-gray-400', lightBg: 'bg-gray-50', border: 'border-gray-200' },
   { key: 'active', label: 'Sent', color: 'bg-blue-500', lightBg: 'bg-blue-50', border: 'border-blue-200' },
   { key: 'viewed', label: 'Viewed', color: 'bg-amber-500', lightBg: 'bg-amber-50', border: 'border-amber-200' },
-  { key: 'accepted', label: 'Accepted', color: 'bg-green-500', lightBg: 'bg-green-50', border: 'border-green-200' },
+  { key: 'accepted', label: 'E-signed', color: 'bg-green-500', lightBg: 'bg-green-50', border: 'border-green-200' },
   { key: 'rejected', label: 'Rejected', color: 'bg-red-400', lightBg: 'bg-red-50', border: 'border-red-200' },
 ] as const;
 
@@ -82,10 +82,9 @@ export default function ProposalsPage() {
       }, {})
     : {};
 
-  const params: Record<string, string> = {};
-  if (statusFilter !== 'all') params.status = statusFilter;
-
-  const { data, error, isLoading, mutate } = useProposals(params);
+  // Always fetch all proposals — client-side filtering handles status + text.
+  // The Proposales API's filter[status] is unreliable (returns mixed statuses).
+  const { data, error, isLoading, mutate } = useProposals();
 
   const allProposals: Record<string, unknown>[] = data?.data
     ? Array.isArray(data.data)
@@ -93,26 +92,53 @@ export default function ProposalsPage() {
       : [data.data]
     : [];
 
-  // Client-side text search (the API may not support text filtering)
-  const proposals = searchText
-    ? allProposals.filter((p) => {
-        const needle = searchText.toLowerCase();
-        const title = ((p.title_md || p.title || '') as string).toLowerCase();
-        const contact = ((p.contact_name || p.recipient_name || '') as string).toLowerCase();
-        const email = ((p.contact_email || p.recipient_email || '') as string).toLowerCase();
-        const uuid = ((p.uuid || '') as string).toLowerCase();
-        return title.includes(needle) || contact.includes(needle) || email.includes(needle) || uuid.includes(needle);
-      })
-    : allProposals;
+  // Client-side status + text filtering
+  const proposals = allProposals.filter((p) => {
+    // Status filter (table mode only — kanban shows all and distributes into columns)
+    if (viewMode === 'table' && statusFilter !== 'all') {
+      const pStatus = (p.status as string) || '';
+      if (pStatus !== statusFilter) return false;
+    }
+    // Text search
+    if (searchText) {
+      const needle = searchText.toLowerCase();
+      const title = ((p.title_md || p.title || '') as string).toLowerCase();
+      const contact = ((p.contact_name || p.recipient_name || '') as string).toLowerCase();
+      const email = ((p.contact_email || p.recipient_email || '') as string).toLowerCase();
+      const uuid = ((p.uuid || '') as string).toLowerCase();
+      if (!title.includes(needle) && !contact.includes(needle) && !email.includes(needle) && !uuid.includes(needle)) return false;
+    }
+    return true;
+  });
+
+  // Derive the live status from a proposal's tracking data + API status
+  function deriveLiveStatus(proposal: Record<string, unknown>): 'draft' | 'active' | 'viewed' | 'accepted' | 'rejected' | 'expired' {
+    const apiStatus = (proposal.status as string) || 'draft';
+    const tracking = proposal.tracking as Record<string, unknown> | undefined;
+    const signatures = proposal.signatures as unknown[] | undefined;
+
+    // E-signed / accepted
+    if (apiStatus === 'accepted' || (signatures && signatures.length > 0)) return 'accepted';
+    // Rejected
+    if (apiStatus === 'rejected') return 'rejected';
+    // Expired
+    if (apiStatus === 'expired') return 'expired';
+
+    // Active proposals: check if viewed
+    if (apiStatus === 'active') {
+      const viewCount = (proposal.viewed_count as number) || (tracking?.number_of_views as number) || 0;
+      const firstViewed = tracking?.first_viewed_at;
+      if (viewCount > 0 || firstViewed) return 'viewed';
+      return 'active';
+    }
+
+    return 'draft';
+  }
 
   function getCardColumn(proposal: Record<string, unknown>): string {
     const uuid = (proposal.uuid as string) || '';
     if (uuid && columnOverrides[uuid]) return columnOverrides[uuid];
-
-    const status = (proposal.status as string) || '';
-    if (status === 'active' && (proposal.viewed_count as number) > 0) return 'viewed';
-    if (status === 'active') return 'active';
-    return status;
+    return deriveLiveStatus(proposal);
   }
 
   async function handleMoveProposal(uuid: string, toColumn: string) {
@@ -349,7 +375,11 @@ export default function ProposalsPage() {
     {
       key: 'status',
       header: 'Status',
-      render: (item) => <StatusBadge status={item.status as string} />,
+      render: (item) => (
+        <div className="flex flex-col gap-1">
+          <ProposalStatusStepper proposal={item} compact />
+        </div>
+      ),
     },
     {
       key: 'value_with_tax',
@@ -726,6 +756,116 @@ export default function ProposalsPage() {
   );
 }
 
+// ─── Live Status Stepper ───
+
+const STATUS_STEPS = [
+  { key: 'draft', label: 'Draft', icon: '📝' },
+  { key: 'sent', label: 'Sent', icon: '📧' },
+  { key: 'viewed', label: 'Viewed', icon: '👁' },
+  { key: 'signed', label: 'E-signed', icon: '✅' },
+] as const;
+
+function getStepIndex(proposal: Record<string, unknown>): number {
+  const status = (proposal.status as string) || 'draft';
+  const tracking = proposal.tracking as Record<string, unknown> | undefined;
+  const signatures = proposal.signatures as unknown[] | undefined;
+
+  if (status === 'accepted' || (signatures && signatures.length > 0)) return 3; // e-signed
+  if (tracking?.first_viewed_at || (proposal.viewed_count as number) > 0 || (tracking?.number_of_views as number) > 0) return 2; // viewed
+  if (status === 'active' || tracking?.sent_at) return 1; // sent
+  return 0; // draft
+}
+
+function ProposalStatusStepper({ proposal, compact }: { proposal: Record<string, unknown>; compact?: boolean }) {
+  const currentStep = getStepIndex(proposal);
+  const status = (proposal.status as string) || 'draft';
+
+  // For rejected/expired, show a special indicator
+  if (status === 'rejected') {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="h-2 w-2 rounded-full bg-red-500" />
+        <span className="text-[10px] font-medium text-red-600">Rejected</span>
+      </div>
+    );
+  }
+  if (status === 'expired') {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="h-2 w-2 rounded-full bg-amber-500" />
+        <span className="text-[10px] font-medium text-amber-600">Expired</span>
+      </div>
+    );
+  }
+
+  if (compact) {
+    // Compact: just dots with connecting lines
+    return (
+      <div className="flex items-center gap-0.5">
+        {STATUS_STEPS.map((step, i) => {
+          const isDone = i <= currentStep;
+          const isCurrent = i === currentStep;
+          return (
+            <div key={step.key} className="flex items-center">
+              <div
+                className={cn(
+                  'h-2 w-2 rounded-full transition-all',
+                  isDone
+                    ? isCurrent
+                      ? 'bg-green-500 ring-2 ring-green-200'
+                      : 'bg-green-500'
+                    : 'bg-gray-200',
+                )}
+                title={`${step.label}${isDone ? ' ✓' : ''}`}
+              />
+              {i < STATUS_STEPS.length - 1 && (
+                <div className={cn('h-0.5 w-3 mx-0.5', i < currentStep ? 'bg-green-400' : 'bg-gray-200')} />
+              )}
+            </div>
+          );
+        })}
+        <span className="ml-1 text-[10px] font-medium text-gray-600">
+          {STATUS_STEPS[currentStep].label}
+        </span>
+      </div>
+    );
+  }
+
+  // Full: with labels
+  return (
+    <div className="flex items-center gap-1">
+      {STATUS_STEPS.map((step, i) => {
+        const isDone = i <= currentStep;
+        const isCurrent = i === currentStep;
+        return (
+          <div key={step.key} className="flex items-center">
+            <div className="flex flex-col items-center">
+              <div
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-full text-[10px] transition-all',
+                  isDone
+                    ? isCurrent
+                      ? 'bg-green-500 text-white ring-2 ring-green-200'
+                      : 'bg-green-500 text-white'
+                    : 'bg-gray-100 text-gray-400',
+                )}
+              >
+                {isDone ? '✓' : i + 1}
+              </div>
+              <span className={cn('text-[9px] mt-0.5', isDone ? 'text-green-700 font-medium' : 'text-gray-400')}>
+                {step.label}
+              </span>
+            </div>
+            {i < STATUS_STEPS.length - 1 && (
+              <div className={cn('h-0.5 w-4 mx-0.5 mt-[-10px]', i < currentStep ? 'bg-green-400' : 'bg-gray-200')} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Kanban Board ───
 
 function KanbanBoard({
@@ -841,6 +981,10 @@ function KanbanBoard({
                     <p className="text-sm font-medium text-gray-900 truncate">
                       {(p.title_md || p.title || 'Untitled') as string}
                     </p>
+                    {/* Live status stepper */}
+                    <div className="mt-1.5">
+                      <ProposalStatusStepper proposal={p} compact />
+                    </div>
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-xs text-gray-500">
                         {(p.contact_name || p.recipient_name || '—') as string}

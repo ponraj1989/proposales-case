@@ -379,59 +379,9 @@ export function checkAvailability(query: AvailabilityQuery): AvailableSlot[] {
 
 // ─── Dynamic Pricing ───
 
-function calculatePrice(space: Space, date: string, slot: TimeSlot, guests: number): number {
-  let price = space.base_price_cents;
-
-  const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  const month = d.getMonth();
-
-  // Weekend premium: +20%
-  if (dayOfWeek === 0 || dayOfWeek === 6) {
-    price = Math.round(price * 1.2);
-  }
-
-  // Peak summer season (Jun-Aug): +15%
-  if (month >= 5 && month <= 7) {
-    price = Math.round(price * 1.15);
-  }
-
-  // Christmas / New Year (Dec-Jan): +20%
-  if (month === 11 || month === 0) {
-    price = Math.round(price * 1.2);
-  }
-
-  // Easter week (Mar-Apr): +10%
-  if (month === 2 || month === 3) {
-    price = Math.round(price * 1.1);
-  }
-
-  // Off-peak discount (Feb, Sep-Nov): -8%
-  if (month === 1 || (month >= 8 && month <= 10)) {
-    price = Math.round(price * 0.92);
-  }
-
-  // Time slot factor
-  if (slot.id === 'full-day') {
-    price = Math.round(price * 1.5);
-  } else if (slot.id === 'evening') {
-    price = Math.round(price * 1.1);
-  } else if (slot.id === 'morning') {
-    price = Math.round(price * 0.9);
-  }
-
-  // High-utilization surcharge: if >80% capacity used, +10%
-  const utilizationRatio = guests / space.capacity;
-  if (utilizationRatio > 0.8) {
-    price = Math.round(price * 1.1);
-  }
-
-  // Small party discount: if <30% capacity, -10%
-  if (utilizationRatio < 0.3) {
-    price = Math.round(price * 0.9);
-  }
-
-  return price;
+function calculatePrice(space: Space, _date: string, _slot: TimeSlot, _guests: number): number {
+  // Return base price directly — matches the Spaces tab pricing
+  return space.base_price_cents;
 }
 
 export interface BookingRequest {

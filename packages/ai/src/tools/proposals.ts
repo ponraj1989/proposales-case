@@ -2,6 +2,94 @@ import { z } from 'zod';
 import { tool } from 'ai';
 import { integrationFieldSchema, type ProposalesSDK, type Proposal } from '@proposales/api-client';
 
+// ─── Content Price Map (matches Proposales dashboard pricing) ───
+const CONTENT_PRICE_MAP: Record<string, { price_cents: number; unit_type: string }> = {
+  'all meals':                { price_cents: 8000,   unit_type: 'person' },
+  'full board':               { price_cents: 8000,   unit_type: 'person' },
+  'boardroom medium':         { price_cents: 22000,  unit_type: 'day' },
+  'double room standard':     { price_cents: 7600,   unit_type: 'day' },
+  'double room':              { price_cents: 7600,   unit_type: 'day' },
+  'projector':                { price_cents: 1500,   unit_type: 'day' },
+  'breakfast':                { price_cents: 1800,   unit_type: 'person' },
+  'lunch':                    { price_cents: 2500,   unit_type: 'person' },
+  'dinner':                   { price_cents: 2500,   unit_type: 'person' },
+  'transportation':           { price_cents: 2500,   unit_type: 'person' },
+  'boardroom grand':          { price_cents: 30000,  unit_type: 'day' },
+  'boardroom small':          { price_cents: 15000,  unit_type: 'day' },
+  'banquet small':            { price_cents: 50000,  unit_type: 'day' },
+  'banquet medium':           { price_cents: 80000,  unit_type: 'day' },
+  'banquet grand':            { price_cents: 100000, unit_type: 'day' },
+  'single room':              { price_cents: 5000,   unit_type: 'day' },
+  'suite room':               { price_cents: 10000,  unit_type: 'day' },
+  'suite':                    { price_cents: 10000,  unit_type: 'day' },
+  'microphones and speakers': { price_cents: 1000,   unit_type: 'day' },
+  'microphone':               { price_cents: 1000,   unit_type: 'day' },
+  'stage decors':             { price_cents: 10000,  unit_type: 'unit' },
+  'stage decoration':         { price_cents: 10000,  unit_type: 'unit' },
+  'decoration':               { price_cents: 10000,  unit_type: 'unit' },
+  'coffee and snacks':        { price_cents: 500,    unit_type: 'person' },
+  'coffee':                   { price_cents: 500,    unit_type: 'person' },
+  'snacks':                   { price_cents: 500,    unit_type: 'person' },
+};
+
+function lookupContentPrice(title: string): { price_cents: number; unit_type: string } | null {
+  const lower = title.toLowerCase().trim();
+  if (CONTENT_PRICE_MAP[lower]) return CONTENT_PRICE_MAP[lower];
+  let best: { price_cents: number; unit_type: string } | null = null;
+  let bestLen = 0;
+  for (const [key, val] of Object.entries(CONTENT_PRICE_MAP)) {
+    if (lower.includes(key) && key.length > bestLen) {
+      best = val;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+
+// ─── Content Image Map (local images in /public/images/) ───
+const CONTENT_IMAGE_MAP: Record<string, string> = {
+  'banquet grand':            '/images/Banquet Grand.webp',
+  'banquet medium':           '/images/Banquet Medium.jpg',
+  'banquet small':            '/images/Banquet Small.jpeg',
+  'boardroom grand':          '/images/Boardroom Grand.jpg',
+  'boardroom medium':         '/images/Boardroom Medium.jpg',
+  'boardroom small':          '/images/Boardroom small.jpg',
+  'double room standard':     '/images/Double Room.jpg',
+  'double room':              '/images/Double Room.jpg',
+  'single room':              '/images/Single Room.webp',
+  'suite room':               '/images/Suite Room.webp',
+  'suite':                    '/images/Suite Room.webp',
+  'dinner':                   '/images/Dinner.jpg',
+  'lunch':                    '/images/lunch.webp',
+  'breakfast':                '/images/Breakfast.webp',
+  'all meals':                '/images/Full Board All Meals.webp',
+  'full board':               '/images/Full Board All Meals.webp',
+  'coffee and snacks':        '/images/Coffee and Snacks.avif',
+  'coffee':                   '/images/Coffee and Snacks.avif',
+  'snacks':                   '/images/Coffee and Snacks.avif',
+  'projector':                '/images/Projector.jpg',
+  'microphones and speakers': '/images/microphone and speakers.webp',
+  'microphone':               '/images/microphone and speakers.webp',
+  'stage decors':             '/images/decoration.jpeg',
+  'stage decoration':         '/images/decoration.jpeg',
+  'decoration':               '/images/decoration.jpeg',
+  'transportation':           '/images/transportation.jpg',
+};
+
+function lookupContentImage(title: string): string | undefined {
+  const lower = title.toLowerCase().trim();
+  if (CONTENT_IMAGE_MAP[lower]) return CONTENT_IMAGE_MAP[lower];
+  let best: string | undefined;
+  let bestLen = 0;
+  for (const [key, val] of Object.entries(CONTENT_IMAGE_MAP)) {
+    if (lower.includes(key) && key.length > bestLen) {
+      best = val;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+
 // ─── Existing tools ───
 
 export function createSearchProposalsTool(sdk: ProposalesSDK) {
@@ -91,6 +179,7 @@ export function createCreateProposalTool(sdk: ProposalesSDK) {
           z.union([
             z.object({
               content_id: z.number(),
+              quantity: z.number().min(1).optional().describe('Quantity for this content block (e.g. number of rooms, servings, etc.)'),
               type: z.enum(['product-block', 'video-block']).optional(),
             }),
             z.object({
@@ -101,7 +190,7 @@ export function createCreateProposalTool(sdk: ProposalesSDK) {
           ]),
         )
         .optional()
-        .describe('Content blocks — reference by variation_id as content_id, or inline video blocks'),
+        .describe('Content blocks — reference by variation_id as content_id with optional quantity, or inline video blocks'),
       attachments: z
         .array(
           z.union([
@@ -273,12 +362,12 @@ export function createGenerateProposalDraftTool(
 ) {
   return tool({
     description:
-      'Generate a proposal draft preview for user review. This does NOT create the proposal in Proposales — it only builds a preview card with item names from the content library. The UI renders this as an interactive card with Accept & Generate Proposal / Reject buttons. Call this after gathering all requirements. You MUST call listContent first to get available items and use their variation_id as content_id. NEVER invent prices — prices will be confirmed when the user accepts and the proposal is actually created. The result includes a draft_input object — you MUST pass this unchanged to acceptProposal when the user clicks Accept. CRITICAL: Title must be SHORT — just the event name (max 40 chars). Description must be PRECISE — 1-2 factual sentences. Auto-select room by guest count and include catering items if mentioned.',
+      'Generate a proposal draft preview for user review. This does NOT create the proposal in Proposales — it only builds a preview card with item names from the content library. The UI renders this as an interactive card with Accept & Generate Proposal / Reject buttons. Call this after gathering all requirements. You MUST call listContent first to get available items and use their variation_id as content_id. NEVER invent prices — prices will be confirmed when the user accepts and the proposal is actually created. The result includes a draft_input object — you MUST pass this unchanged to acceptProposal when the user clicks Accept. CRITICAL: Title must be SHORT — just the event name (max 7 words). Description must be PRECISE — 1-2 factual sentences. Auto-select room by guest count and include catering items if mentioned.',
     inputSchema: z.object({
-      title: z.string().describe('SHORT event name as title — max 40 characters. Examples: "Corporate Gala Dinner", "Annual Sales Conference", "Wedding Reception", "Board Strategy Meeting". Do NOT include guest counts, dates, or package details.'),
+      title: z.string().describe('SHORT elegant hotel event name — max 7 words. Must sound like a premium hotel booking package. Examples: "Grand Ballroom Wedding Reception", "Executive Boardroom Retreat", "Lakeside Gala Dinner", "Corporate Strategy Summit", "Luxury Suite Weekend Getaway". Do NOT include guest counts, dates, numbers, or generic words like Setup/Booking.'),
       description: z
         .string()
-        .describe('PRECISE 1-2 sentence description stating what is included factually. Example: "Conference for 50 attendees with lunch, coffee break, and full AV setup in the Grand Boardroom." No marketing fluff.'),
+        .describe('PRECISE 1-2 sentence description of the hotel booking and its included facilities. Mention venue/space, key services (catering, AV, accommodation), and guest capacity. Example: "Exclusive wedding reception for 200 guests in the Grand Ballroom with full-board catering, stage décor, and overnight accommodation." No marketing fluff.'),
       items: z
         .array(draftItemSchema)
         .min(1)
@@ -322,6 +411,8 @@ export function createGenerateProposalDraftTool(
       event_date: z.string().optional().describe('Event date in YYYY-MM-DD format for the booking hold'),
       time_slot_id: z.string().optional().describe('Time slot ID: morning, afternoon, evening, or full-day'),
       guests: z.number().optional().describe('Number of guests for the event'),
+      // Discount (for in-conversation negotiation before proposal creation)
+      discount_percent: z.number().min(0).max(50).optional().describe('Discount percentage to apply to all items (0-50). Use this when revising a draft BEFORE the proposal has been created — i.e. the user rejected the draft and asked for a discount within the same conversation.'),
     }),
     execute: async (input) => {
       const recipientEmail = userInfo?.email || input.recipient_email;
@@ -331,7 +422,7 @@ export function createGenerateProposalDraftTool(
 
       // ─── Preview-only: resolve content item names from the content library ───
       // The actual Proposales API proposal is NOT created here — only on user accept.
-      let resolvedItems: { name: string; description: string; quantity: number; content_id: number; image_url?: string }[] = [];
+      let resolvedItems: { name: string; description: string; quantity: number; content_id: number; image_url?: string; unit_price: number; total: number; unit_type?: string }[] = [];
       let headerImage: string | null = null;
 
       if (sdk) {
@@ -344,13 +435,18 @@ export function createGenerateProposalDraftTool(
             const content = contentMap.get(item.content_id);
             const title = content?.title?.en || Object.values(content?.title || {})[0] || `Item #${item.content_id}`;
             const desc = content?.description?.en || Object.values(content?.description || {})[0] || '';
-            const firstImage = content?.images?.[0]?.url || undefined;
+            const firstImage = content?.images?.[0]?.url || lookupContentImage(title);
+            const priceInfo = lookupContentPrice(title);
+            const unitPrice = priceInfo ? priceInfo.price_cents / 100 : 0;
             return {
               name: title,
               description: desc,
               quantity: item.quantity,
               content_id: item.content_id,
               image_url: firstImage,
+              unit_price: unitPrice,
+              total: Math.round(unitPrice * item.quantity * 100) / 100,
+              unit_type: priceInfo?.unit_type,
             };
           });
 
@@ -363,15 +459,37 @@ export function createGenerateProposalDraftTool(
             description: '',
             quantity: item.quantity,
             content_id: item.content_id,
+            unit_price: 0,
+            total: 0,
           }));
         }
       }
+
+      const subtotal = resolvedItems.reduce((sum, i) => sum + i.total, 0);
+
+      // Apply discount if provided (in-conversation negotiation before proposal creation)
+      const discountPct = input.discount_percent ?? 0;
+      const multiplier = discountPct > 0 ? (100 - discountPct) / 100 : 1;
+      if (discountPct > 0) {
+        for (const item of resolvedItems) {
+          item.unit_price = Math.round(item.unit_price * multiplier * 100) / 100;
+          item.total = Math.round(item.unit_price * item.quantity * 100) / 100;
+        }
+      }
+      const discountedSubtotal = discountPct > 0
+        ? resolvedItems.reduce((sum, i) => sum + i.total, 0)
+        : subtotal;
+      const tax = Math.round(discountedSubtotal * 0.1 * 100) / 100; // 10% estimated tax
+      const grandTotal = Math.round((discountedSubtotal + tax) * 100) / 100;
 
       return {
         type: 'proposal_draft' as const,
         title: input.title,
         description: input.description,
         items: resolvedItems,
+        subtotal,
+        tax,
+        total: grandTotal,
         currency: input.currency,
         recipient: {
           name: input.recipient_name,
@@ -383,9 +501,9 @@ export function createGenerateProposalDraftTool(
         notes: input.notes ?? '',
         venue_type: input.venue_type ?? null,
         header_image: headerImage,
-        negotiation_round: 0,
+        negotiation_round: discountPct > 0 ? 1 : 0,
         max_negotiation_rounds: 3,
-        discount_applied: 0,
+        discount_applied: discountPct,
         // No proposalUuid yet — created only on acceptance
         proposalUuid: null,
         proposalUrl: null,

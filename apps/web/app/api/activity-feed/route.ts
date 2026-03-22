@@ -1,17 +1,35 @@
 import { NextResponse } from 'next/server';
 import { getUserRole } from '@/lib/auth';
-import { listActivityFeed, pushActivityFeedEvent } from '@/lib/activity-feed';
+import { listActivityFeed, pushActivityFeedEvent, ACTIVITY_FEED_SEEN_KEY } from '@/lib/activity-feed';
+import { getRedis } from '@/lib/redis';
 import { getSDK } from '@/lib/sdk';
 
-let seeded = false;
+// Dedup key: Redis SET that tracks which proposal events have already been pushed
+const SEEN_KEY = ACTIVITY_FEED_SEEN_KEY;
+const REFRESH_INTERVAL_MS = 60_000; // re-sync from API at most once per minute
+let lastRefreshedAt = 0;
 
-/** Seed activity feed from existing proposal tracking data if the feed is empty */
-async function seedFromProposals() {
-  if (seeded) return;
-  seeded = true;
+/** Push an event only if it hasn't been pushed before (dedup by uuid+type) */
+async function pushIfNew(
+  redis: ReturnType<typeof getRedis>,
+  dedupKey: string,
+  event: Parameters<typeof pushActivityFeedEvent>[0],
+) {
+  if (!redis) return;
+  const alreadySeen = await redis.sismember(SEEN_KEY, dedupKey);
+  if (alreadySeen) return;
+  await pushActivityFeedEvent(event);
+  await redis.sadd(SEEN_KEY, dedupKey);
+}
 
-  const existing = await listActivityFeed(1);
-  if (existing.length > 0) return;
+/** Periodically sync the activity feed from the Proposales API (deduped) */
+async function refreshFromProposals() {
+  const now = Date.now();
+  if (now - lastRefreshedAt < REFRESH_INTERVAL_MS) return;
+  lastRefreshedAt = now;
+
+  const redis = getRedis();
+  if (!redis) return;
 
   try {
     const sdk = getSDK();
@@ -32,10 +50,10 @@ async function seedFromProposals() {
         const currency = p.currency || 'EUR';
         const tracking = p.tracking;
 
-        // Push "created" event
+        // "created" event
         const createdAt = (item as unknown as Record<string, unknown>).created_at;
         if (createdAt) {
-          await pushActivityFeedEvent({
+          await pushIfNew(redis, `${uuid}:created`, {
             type: 'created',
             title: 'Proposal Created',
             description: `"${title}" created for ${contact}${amount ? ` — €${amount.toLocaleString('en-IE', { minimumFractionDigits: 2 })}` : ''}`,
@@ -48,9 +66,9 @@ async function seedFromProposals() {
           });
         }
 
-        // Push "sent" if tracked
+        // "sent" event
         if (tracking?.sent_at) {
-          await pushActivityFeedEvent({
+          await pushIfNew(redis, `${uuid}:sent`, {
             type: 'sent',
             title: 'Proposal Sent',
             description: `"${title}" sent to ${contact}`,
@@ -63,9 +81,9 @@ async function seedFromProposals() {
           });
         }
 
-        // Push "viewed" if tracked
+        // "viewed" event
         if (tracking?.first_viewed_at) {
-          await pushActivityFeedEvent({
+          await pushIfNew(redis, `${uuid}:viewed`, {
             type: 'viewed',
             title: 'Proposal Viewed',
             description: `${contact} viewed "${title}"${tracking.number_of_views ? ` (${tracking.number_of_views} views)` : ''}`,
@@ -78,9 +96,9 @@ async function seedFromProposals() {
           });
         }
 
-        // Push "signed" if accepted
+        // "signed" event
         if (tracking?.accepted_at) {
-          await pushActivityFeedEvent({
+          await pushIfNew(redis, `${uuid}:signed`, {
             type: 'signed',
             title: 'E-Sign Completed',
             description: `${contact} e-signed "${title}"${amount ? ` — €${amount.toLocaleString('en-IE', { minimumFractionDigits: 2 })}` : ''}`,
@@ -93,9 +111,9 @@ async function seedFromProposals() {
           });
         }
 
-        // Push "expired" if status is expired
+        // "expired" event
         if (p.status === 'expired' && tracking?.expired_at) {
-          await pushActivityFeedEvent({
+          await pushIfNew(redis, `${uuid}:expired`, {
             type: 'expired',
             title: 'Proposal Expired',
             description: `"${title}" expired`,
@@ -109,7 +127,7 @@ async function seedFromProposals() {
       }
     }
   } catch {
-    // Non-critical — don't break the feed if seeding fails
+    // Non-critical — don't break the feed if refresh fails
   }
 }
 
@@ -119,7 +137,7 @@ export async function GET() {
     return NextResponse.json({ error: { message: 'Authentication required' } }, { status: 401 });
   }
 
-  await seedFromProposals();
+  await refreshFromProposals();
 
   const events = await listActivityFeed(50);
   return NextResponse.json({ data: events });

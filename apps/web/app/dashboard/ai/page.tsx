@@ -6,6 +6,7 @@ import { type UIMessage, DefaultChatTransport } from 'ai';
 import { cn } from '@proposales/ui';
 import { ChartCard, type ChartConfig } from '@/components/chat/ChartCard';
 import { useUser } from '@/lib/hooks';
+import { getContentPrice as getContentPriceForForm } from '@/lib/content-prices';
 import { QRCodeSVG } from 'qrcode.react';
 
 // ─── Types ───
@@ -31,6 +32,7 @@ interface ProposalDraft {
     unit_price: number;
     total: number;
     content_id?: number;
+    image_url?: string;
   }[];
   subtotal: number;
   tax: number;
@@ -236,14 +238,14 @@ function deleteStoredConversation(id: string) {
 // ─── Suggestions ───
 
 const SALES_SUGGESTIONS = [
-  'Create a proposal for a hotel meeting room with 10 members with food and accommodation',
-  'Create a conference proposal for 50 attendees with AV equipment',
   'Show me a chart of proposals by status',
   'Visualize revenue trend by month',
   'Show my win rate trend over time',
   'What are my top companies by proposal count?',
   'Show a pipeline funnel of my proposals',
-  'Analyze my sales pipeline',
+  'How can I improve my conversion rate?',
+  'Compare this quarter vs last quarter',
+  'Which proposals need follow-up?',
 ];
 
 const GUEST_SUGGESTIONS = [
@@ -544,19 +546,33 @@ export default function AIAssistantPage() {
   const handleFormSubmit = useCallback((formData: EventFormData) => {
     const parts: string[] = [];
     parts.push(`I'd like to book a ${formData.eventType}`);
-    if (formData.venue) parts.push(`at the ${formData.venue}`);
+    if (formData.selectedSpace) {
+      parts.push(`at ${formData.selectedSpace.space_name} (${formData.selectedSpace.space_type}, ${formData.selectedSpace.time_slot}, capacity ${formData.selectedSpace.capacity}, space_id: ${formData.selectedSpace.space_id})`);
+    } else if (formData.venue) {
+      parts.push(`at the ${formData.venue}`);
+    }
     parts.push(`on ${formData.date}`);
     if (formData.time) parts.push(`(${formData.time})`);
     parts.push(`for ${formData.guests} guests`);
     if (formData.setupType) parts.push(`with ${formData.setupType} setup`);
     if (formData.budget) parts.push(`and a budget of €${formData.budget}`);
 
-    const extras: string[] = [];
-    if (formData.catering) extras.push('catering/food service');
-    if (formData.av) extras.push('AV equipment (projector, sound system)');
-    if (formData.accommodation) extras.push('overnight accommodation for guests');
-    if (formData.decoration) extras.push('venue decoration');
-    if (extras.length > 0) parts.push(`. I'll also need ${extras.join(', ')}`);
+    // Include specifically selected items with variation_ids and quantities
+    if (formData.selectedItems.length > 0) {
+      const itemLines = formData.selectedItems.map((si) =>
+        `- ${si.title} (variation_id: ${si.variation_id}, qty: ${si.quantity}, €${(si.price_cents / 100).toFixed(0)}/${si.unit_type})`,
+      );
+      parts.push(`.\n\nSelected items for the proposal:\n${itemLines.join('\n')}`);
+    } else {
+      // Fallback to generic add-on names
+      const extras: string[] = [];
+      if (formData.catering) extras.push('catering/food service');
+      if (formData.av) extras.push('AV equipment (projector, sound system)');
+      if (formData.accommodation) extras.push('overnight accommodation for guests');
+      if (formData.decoration) extras.push('venue decoration');
+      if (formData.transportation) extras.push('transportation');
+      if (extras.length > 0) parts.push(`. I'll also need ${extras.join(', ')}`);
+    }
 
     if (formData.name) parts.push(`. My name is ${formData.name}`);
     if (formData.email) parts.push(`and my email is ${formData.email}`);
@@ -793,28 +809,11 @@ export default function AIAssistantPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={isSales ? 'Ask anything — create proposals, visualize data, analyze pipeline...' : 'Ask me about rooms, parties, food, or anything hotel-related! 🌟'}
+                  placeholder={isSales ? 'Ask about analytics, charts, pipeline insights, or improvements...' : 'Ask me about rooms, parties, food, or anything hotel-related! 🌟'}
                   className="flex-1 h-12 bg-transparent text-sm placeholder:text-gray-400 focus:outline-none"
                   disabled={isLoading}
                 />
-                {/* Voice button */}
-                {hasVoiceSupport && (
-                  <button
-                    type="button"
-                    onClick={toggleVoice}
-                    className={cn(
-                      'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-all duration-200',
-                      isListening
-                        ? 'bg-red-100 text-red-600 animate-pulse'
-                        : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-                    )}
-                    title={isListening ? 'Stop listening' : 'Voice input'}
-                  >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-                    </svg>
-                  </button>
-                )}
+
                 <button
                   type="submit"
                   disabled={isLoading || !input.trim()}
@@ -845,6 +844,26 @@ export default function AIAssistantPage() {
 
 // ─── Types for Form Mode ───
 
+interface SelectedContentItem {
+  variation_id: number;
+  title: string;
+  price_cents: number;
+  unit_type: string;
+  quantity: number;
+}
+
+interface SelectedSpace {
+  space_id: string;
+  space_name: string;
+  space_type: string;
+  capacity: number;
+  price: string;
+  price_cents: number;
+  time_slot_id: string;
+  time_slot: string;
+  amenities: string[];
+}
+
 interface EventFormData {
   eventType: string;
   venue: string;
@@ -857,9 +876,12 @@ interface EventFormData {
   av: boolean;
   accommodation: boolean;
   decoration: boolean;
+  transportation: boolean;
   name: string;
   email: string;
   notes: string;
+  selectedSpace: SelectedSpace | null;
+  selectedItems: SelectedContentItem[];
 }
 
 const EVENT_TYPES = [
@@ -895,6 +917,34 @@ const SETUP_OPTIONS = [
   { value: 'boardroom', label: 'Boardroom' },
   { value: 'u-shape', label: 'U-Shape' },
 ];
+
+// ─── Content Item Categories ───
+type AddonCategory = 'meals' | 'av' | 'decoration' | 'accommodation' | 'transportation';
+
+const ADDON_CATEGORIES: { key: AddonCategory; formKey: keyof EventFormData; label: string; icon: string }[] = [
+  { key: 'meals', formKey: 'catering', label: 'Catering & Food', icon: '🍽️' },
+  { key: 'av', formKey: 'av', label: 'AV Equipment', icon: '🎙️' },
+  { key: 'accommodation', formKey: 'accommodation', label: 'Guest Accommodation', icon: '🛏️' },
+  { key: 'decoration', formKey: 'decoration', label: 'Decoration & Setup', icon: '🎨' },
+  { key: 'transportation', formKey: 'transportation', label: 'Transportation', icon: '🚐' },
+];
+
+const CONTENT_CATEGORY_KEYWORDS: Record<AddonCategory, string[]> = {
+  meals: ['breakfast', 'lunch', 'dinner', 'all meals', 'full board', 'coffee', 'snacks'],
+  av: ['projector', 'microphone', 'speaker', 'sound'],
+  decoration: ['stage', 'decor', 'decoration'],
+  accommodation: ['single room', 'double room', 'suite'],
+  transportation: ['transportation'],
+};
+
+function categorizeContentItem(title: string): AddonCategory | 'venue' | null {
+  const lower = title.toLowerCase();
+  if (lower.includes('boardroom') || lower.includes('banquet') || lower.includes('conference') || lower.includes('garden') || lower.includes('restaurant') || lower.includes('pool')) return 'venue';
+  for (const [cat, keywords] of Object.entries(CONTENT_CATEGORY_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) return cat as AddonCategory;
+  }
+  return null;
+}
 
 // ─── Types for form APIs ───
 interface ContentItem {
@@ -970,14 +1020,39 @@ function EventBookingForm({
     av: false,
     accommodation: false,
     decoration: false,
+    transportation: false,
     name: '',
     email: '',
     notes: '',
+    selectedSpace: null,
+    selectedItems: [],
   });
 
   // ─── Content Catalog State ───
   const [contentItems, setContentItems] = useState<ContentItem[]>([]);
   const [contentLoading, setContentLoading] = useState(true);
+
+  // Categorized content items for add-on selection
+  const categorizedItems = useMemo(() => {
+    const result: Record<AddonCategory, { variation_id: number; title: string; price_cents: number; unit_type: string }[]> = {
+      meals: [], av: [], decoration: [], accommodation: [], transportation: [],
+    };
+    for (const item of contentItems) {
+      const title = toDisplayText(item.title);
+      const cat = categorizeContentItem(title);
+      if (cat && cat !== 'venue' && result[cat]) {
+        const price = item.unit_value_with_tax ?? 0;
+        const cp = getContentPriceForForm(title);
+        result[cat].push({
+          variation_id: item.variation_id || item.id,
+          title,
+          price_cents: price > 0 ? price : (cp?.price_cents ?? 0),
+          unit_type: cp?.unit_type ?? 'unit',
+        });
+      }
+    }
+    return result;
+  }, [contentItems]);
 
   // ─── Calendar State ───
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
@@ -1069,6 +1144,49 @@ function EventBookingForm({
   const update = (field: keyof EventFormData, value: string | boolean) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
+  // Select a space from the availability list
+  const selectSpace = (slot: AvailabilityResult) => {
+    setForm((prev) => ({
+      ...prev,
+      selectedSpace: {
+        space_id: slot.space_id,
+        space_name: slot.space_name,
+        space_type: slot.space_type,
+        capacity: slot.capacity,
+        price: slot.price,
+        price_cents: slot.price_cents,
+        time_slot_id: slot.time_slot_id,
+        time_slot: slot.time_slot,
+        amenities: slot.amenities,
+      },
+      venue: slot.space_type === 'banquet' ? 'banquet' : slot.space_type === 'boardroom' ? 'boardroom' : slot.space_type === 'conference' ? 'conference' : slot.space_type === 'outdoor' ? 'garden' : slot.space_type === 'restaurant' ? 'restaurant' : 'room',
+      time: slot.time_slot_id,
+    }));
+  };
+
+  // Toggle a content item in the selected items list
+  const toggleItem = (item: { variation_id: number; title: string; price_cents: number; unit_type: string }) => {
+    setForm((prev) => {
+      const exists = prev.selectedItems.find((si) => si.variation_id === item.variation_id);
+      if (exists) {
+        return { ...prev, selectedItems: prev.selectedItems.filter((si) => si.variation_id !== item.variation_id) };
+      }
+      const guests = parseInt(prev.guests) || 1;
+      const defaultQty = item.unit_type === 'person' ? guests : 1;
+      return { ...prev, selectedItems: [...prev.selectedItems, { ...item, quantity: defaultQty }] };
+    });
+  };
+
+  // Update quantity for a selected item
+  const updateItemQty = (variation_id: number, qty: number) => {
+    setForm((prev) => ({
+      ...prev,
+      selectedItems: prev.selectedItems.map((si) =>
+        si.variation_id === variation_id ? { ...si, quantity: Math.max(1, qty) } : si,
+      ),
+    }));
+  };
+
   const isValid = form.eventType && form.date && form.guests;
 
   return (
@@ -1132,43 +1250,6 @@ function EventBookingForm({
               </button>
             ))}
           </div>
-        </div>
-
-        {/* ─── Content Catalog (from Proposales Content API) ─── */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">📦 Available Packages & Services</label>
-          {contentLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-transparent" />
-              <span className="ml-2 text-sm text-gray-500">Loading catalog...</span>
-            </div>
-          ) : contentItems.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-500">
-              No catalog items available. The AI will use available content when generating your proposal.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
-              {contentItems.map((item) => (
-                <div
-                  key={item.variation_id || item.id}
-                  className="rounded-xl border border-gray-200 bg-white p-3 hover:border-gray-300 hover:bg-gray-50 transition-all"
-                >
-                  <div className="flex justify-between items-start">
-                    <p className="text-sm font-medium text-gray-800 line-clamp-1">{toDisplayText(item.title)}</p>
-                    {item.unit_value_with_tax != null && item.unit_value_with_tax > 0 && (
-                      <span className="text-xs font-semibold text-gray-700 whitespace-nowrap ml-2">
-                        €{(item.unit_value_with_tax / 100).toLocaleString('en-IE', { minimumFractionDigits: 0 })}
-                      </span>
-                    )}
-                  </div>
-                  {toDisplayText(item.description) && (
-                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{toDisplayText(item.description)}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="text-xs text-gray-400 mt-1.5">These items from the Proposales catalog will be used when generating your proposal with real pricing.</p>
         </div>
 
         {/* Date, Time, Guests row */}
@@ -1316,11 +1397,15 @@ function EventBookingForm({
           )}
         </div>
 
-        {/* ─── Live Availability for Selected Date ─── */}
+        {/* ─── Live Availability for Selected Date (Selectable) ─── */}
         {form.date && form.guests && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              🏨 Available Spaces on {new Date(form.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              🏨 Select a Space{' '}
+              <span className="text-gray-400 font-normal">
+                on {new Date(form.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </span>
+              {form.selectedSpace && <span className="text-green-600 text-xs ml-2">✓ Selected</span>}
             </label>
             {availabilityLoading ? (
               <div className="flex items-center justify-center py-4">
@@ -1334,31 +1419,43 @@ function EventBookingForm({
               </div>
             ) : (
               <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                {availability.map((slot, i) => (
-                  <button
-                    key={`${slot.space_id}-${slot.time_slot_id}-${i}`}
-                    type="button"
-                    onClick={() => {
-                      update('venue', slot.space_type === 'banquet' ? 'banquet' : slot.space_type === 'boardroom' ? 'boardroom' : slot.space_type === 'conference' ? 'conference' : slot.space_type === 'outdoor' ? 'garden' : slot.space_type === 'restaurant' ? 'restaurant' : 'room');
-                      update('time', slot.time_slot_id);
-                    }}
-                    className={cn(
-                      'w-full flex items-center justify-between rounded-xl border-2 p-3 text-left transition-all',
-                      form.venue && form.time === slot.time_slot_id && form.venue === (slot.space_type === 'banquet' ? 'banquet' : slot.space_type === 'boardroom' ? 'boardroom' : slot.space_type)
-                        ? 'border-gray-900 bg-gray-100'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50',
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-800">{slot.space_name}</p>
-                      <p className="text-xs text-gray-500">{slot.time_slot} · {slot.capacity} max · {slot.amenities.slice(0, 2).join(', ')}</p>
-                    </div>
-                    <div className="text-right flex-shrink-0 ml-3">
-                      <p className="text-sm font-bold text-gray-700">{slot.price}</p>
-                      <p className="text-[10px] text-green-600 font-medium">✓ Available</p>
-                    </div>
-                  </button>
-                ))}
+                {availability.map((slot, i) => {
+                  const isSelected = form.selectedSpace?.space_id === slot.space_id && form.selectedSpace?.time_slot_id === slot.time_slot_id;
+                  return (
+                    <button
+                      key={`${slot.space_id}-${slot.time_slot_id}-${i}`}
+                      type="button"
+                      onClick={() => selectSpace(slot)}
+                      className={cn(
+                        'w-full flex items-center justify-between rounded-xl border-2 p-3 text-left transition-all',
+                        isSelected
+                          ? 'border-gray-900 bg-gray-100 ring-1 ring-gray-900/10'
+                          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50',
+                      )}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={cn(
+                          'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 transition-all',
+                          isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300',
+                        )}>
+                          {isSelected && (
+                            <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                            </svg>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">{slot.space_name}</p>
+                          <p className="text-xs text-gray-500">{slot.time_slot} · {slot.capacity} max · {slot.amenities.slice(0, 3).join(', ')}</p>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-3">
+                        <p className="text-sm font-bold text-gray-700">{slot.price}</p>
+                        <p className="text-[10px] text-green-600 font-medium">✓ Available</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1392,37 +1489,159 @@ function EventBookingForm({
           </div>
         </div>
 
-        {/* Add-ons */}
+        {/* ─── Add-ons with expandable item selection ─── */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Add-ons</label>
-          <div className="grid grid-cols-2 gap-2">
-            {([
-              { key: 'catering' as const, label: 'Catering & Food', icon: '🍽️' },
-              { key: 'av' as const, label: 'AV Equipment', icon: '🎙️' },
-              { key: 'accommodation' as const, label: 'Guest Accommodation', icon: '🛏️' },
-              { key: 'decoration' as const, label: 'Decoration & Setup', icon: '🎨' },
-            ]).map((addon) => (
-              <button
-                key={addon.key}
-                type="button"
-                onClick={() => update(addon.key, !form[addon.key])}
-                className={cn(
-                  'flex items-center gap-2 rounded-lg border-2 px-3 py-2.5 text-sm transition-all',
-                  form[addon.key]
-                    ? 'border-gray-900 bg-gray-100 text-gray-900'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
-                )}
-              >
-                <span>{addon.icon}</span>
-                <span className="font-medium">{addon.label}</span>
-                {form[addon.key] && (
-                  <svg className="ml-auto h-4 w-4 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                  </svg>
-                )}
-              </button>
-            ))}
-          </div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Add-ons & Services
+            {form.selectedItems.length > 0 && (
+              <span className="ml-2 text-xs font-normal text-green-600">
+                {form.selectedItems.length} item{form.selectedItems.length !== 1 ? 's' : ''} selected
+              </span>
+            )}
+          </label>
+          {contentLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-700 border-t-transparent" />
+              <span className="ml-2 text-xs text-gray-500">Loading services...</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {ADDON_CATEGORIES.map((addon) => {
+                const isOpen = form[addon.formKey] as boolean;
+                const items = categorizedItems[addon.key];
+                const selectedInCategory = form.selectedItems.filter((si) =>
+                  items.some((it) => it.variation_id === si.variation_id),
+                );
+                return (
+                  <div key={addon.key} className="rounded-xl border border-gray-200 overflow-hidden transition-all">
+                    {/* Toggle header */}
+                    <button
+                      type="button"
+                      onClick={() => update(addon.formKey, !isOpen)}
+                      className={cn(
+                        'w-full flex items-center justify-between px-4 py-3 text-sm transition-all',
+                        isOpen ? 'bg-gray-100 border-b border-gray-200' : 'bg-white hover:bg-gray-50',
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{addon.icon}</span>
+                        <span className="font-medium text-gray-800">{addon.label}</span>
+                        {selectedInCategory.length > 0 && (
+                          <span className="ml-1 inline-flex items-center rounded-full bg-gray-900 text-white text-[10px] font-bold px-1.5 py-0.5">
+                            {selectedInCategory.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {items.length > 0 && (
+                          <span className="text-xs text-gray-400">{items.length} option{items.length !== 1 ? 's' : ''}</span>
+                        )}
+                        <svg className={cn('h-4 w-4 text-gray-400 transition-transform', isOpen && 'rotate-180')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </div>
+                    </button>
+
+                    {/* Expanded items */}
+                    {isOpen && (
+                      <div className="bg-white">
+                        {items.length === 0 ? (
+                          <div className="px-4 py-3 text-xs text-gray-400 italic">No items available in this category</div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {items.map((item) => {
+                              const sel = form.selectedItems.find((si) => si.variation_id === item.variation_id);
+                              const isChecked = !!sel;
+                              const priceDisplay = item.price_cents > 0
+                                ? `€${(item.price_cents / 100).toLocaleString('en-IE', { minimumFractionDigits: 0 })}/${item.unit_type}`
+                                : '';
+                              return (
+                                <div key={item.variation_id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors">
+                                  {/* Checkbox */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleItem(item)}
+                                    className={cn(
+                                      'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 transition-all',
+                                      isChecked ? 'border-gray-900 bg-gray-900' : 'border-gray-300 hover:border-gray-400',
+                                    )}
+                                  >
+                                    {isChecked && (
+                                      <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                      </svg>
+                                    )}
+                                  </button>
+
+                                  {/* Item info */}
+                                  <button type="button" onClick={() => toggleItem(item)} className="flex-1 text-left min-w-0">
+                                    <p className={cn('text-sm', isChecked ? 'font-medium text-gray-900' : 'text-gray-700')}>{item.title}</p>
+                                  </button>
+
+                                  {/* Price */}
+                                  {priceDisplay && (
+                                    <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">{priceDisplay}</span>
+                                  )}
+
+                                  {/* Quantity */}
+                                  {isChecked && (
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => updateItemQty(item.variation_id, (sel?.quantity ?? 1) - 1)}
+                                        className="h-6 w-6 flex items-center justify-center rounded border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs"
+                                      >−</button>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={sel?.quantity ?? 1}
+                                        onChange={(e) => updateItemQty(item.variation_id, parseInt(e.target.value) || 1)}
+                                        className="w-10 text-center text-xs border border-gray-300 rounded py-1 focus:outline-none focus:ring-1 focus:ring-gray-700"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => updateItemQty(item.variation_id, (sel?.quantity ?? 1) + 1)}
+                                        className="h-6 w-6 flex items-center justify-center rounded border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs"
+                                      >+</button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Selected items summary */}
+          {form.selectedItems.length > 0 && (
+            <div className="mt-3 rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <p className="text-xs font-semibold text-gray-700 mb-2">Selected Items Summary</p>
+              <div className="space-y-1">
+                {form.selectedItems.map((si) => (
+                  <div key={si.variation_id} className="flex items-center justify-between text-xs">
+                    <span className="text-gray-600">{si.title} × {si.quantity}</span>
+                    {si.price_cents > 0 && (
+                      <span className="font-medium text-gray-800">
+                        €{((si.price_cents * si.quantity) / 100).toLocaleString('en-IE', { minimumFractionDigits: 0 })}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                <div className="border-t border-gray-200 pt-1 mt-1 flex items-center justify-between text-xs font-semibold text-gray-900">
+                  <span>Estimated Add-ons Total</span>
+                  <span>
+                    €{form.selectedItems.reduce((sum, si) => sum + (si.price_cents * si.quantity) / 100, 0).toLocaleString('en-IE', { minimumFractionDigits: 0 })}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Contact details */}
@@ -1503,10 +1722,10 @@ function EmptyState({
           </svg>
         </div>
       </div>
-      <h3 className="text-xl font-bold text-gray-900 mb-1">{isSales ? 'How can I help?' : 'Hey there! 👋 Welcome!'}</h3>
+      <h3 className="text-xl font-bold text-gray-900 mb-1">{isSales ? 'Sales Analytics & Insights' : 'Hey there! 👋 Welcome!'}</h3>
       <p className="text-sm text-gray-500 max-w-md mb-8">
         {isSales
-          ? 'I can create proposals, analyze pricing, visualize your data with charts, and manage the full proposal lifecycle.'
+          ? 'I can visualize your data with charts, analyze pipeline performance, and suggest improvements. To create proposals, head to the Proposals page.'
           : "I'm your friendly hotel concierge — think of me as the person who knows all the best rooms, the tastiest menus, and the secret to a perfect event. Let's make something amazing! ✨"}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl w-full">
@@ -2029,14 +2248,18 @@ function ProposalCard({
   const [actionTaken, setActionTaken] = useState<'accepted' | 'rejected' | null>(null);
   const buttonsDisabled = actionTaken !== null || isLoading;
 
+  const hasPrices = draft.items.some((i) => i.unit_price != null && !isNaN(i.unit_price));
   const fmt = (n: number) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: draft.currency || 'EUR',
-    }).format(n);
+    n == null || isNaN(n)
+      ? '—'
+      : new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: draft.currency || 'EUR',
+        }).format(n);
 
   const venueImage = getVenueImage(draft.venue_type);
-  const headerUrl = draft.header_image || venueImage?.url;
+  const rawHeaderUrl = draft.header_image || venueImage?.url;
+  const headerUrl = rawHeaderUrl ? rawHeaderUrl.replace(/ /g, '%20') : null;
   const headerLabel = venueImage?.label || (draft.header_image ? 'Content Preview' : null);
 
   return (
@@ -2100,20 +2323,35 @@ function ProposalCard({
             <tr className="border-b border-gray-100">
               <th className="pb-2 text-left text-xs font-medium uppercase tracking-wider text-gray-400">Item</th>
               <th className="pb-2 text-center text-xs font-medium uppercase tracking-wider text-gray-400">Qty</th>
-              <th className="pb-2 text-right text-xs font-medium uppercase tracking-wider text-gray-400">Price</th>
-              <th className="pb-2 text-right text-xs font-medium uppercase tracking-wider text-gray-400">Total</th>
+              {hasPrices && (
+                <>
+                  <th className="pb-2 text-right text-xs font-medium uppercase tracking-wider text-gray-400">Price</th>
+                  <th className="pb-2 text-right text-xs font-medium uppercase tracking-wider text-gray-400">Total</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
             {draft.items.map((item, i) => (
               <tr key={i} className="border-b border-gray-50 cost-line-item" style={{ animationDelay: `${i * 120}ms` }}>
                 <td className="py-2.5">
-                  <p className="font-medium text-gray-800">{item.name}</p>
-                  <p className="text-xs text-gray-500">{item.description}</p>
+                  <div className="flex items-center gap-3">
+                    {item.image_url && (
+                      <img src={item.image_url} alt={item.name} className="h-10 w-10 rounded-md object-cover flex-shrink-0" />
+                    )}
+                    <div>
+                      <p className="font-medium text-gray-800">{item.name}</p>
+                      <p className="text-xs text-gray-500">{item.description}</p>
+                    </div>
+                  </div>
                 </td>
                 <td className="py-2.5 text-center text-gray-600">{item.quantity}</td>
-                <td className="py-2.5 text-right text-gray-600">{fmt(item.unit_price)}</td>
-                <td className="py-2.5 text-right font-medium text-gray-800">{fmt(item.total)}</td>
+                {hasPrices && (
+                  <>
+                    <td className="py-2.5 text-right text-gray-600">{fmt(item.unit_price)}</td>
+                    <td className="py-2.5 text-right font-medium text-gray-800">{fmt(item.total)}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -2121,25 +2359,31 @@ function ProposalCard({
       </div>
 
       {/* Totals with count-up animation */}
-      <div className="border-t border-gray-200 bg-gray-50 px-5 py-3 space-y-1 cost-total-reveal" style={{ animationDelay: `${draft.items.length * 120 + 200}ms` }}>
-        <div className="flex justify-between text-sm text-gray-600">
-          <span>Subtotal</span>
-          <span>{fmt(draft.subtotal)}</span>
+      {hasPrices ? (
+        <div className="border-t border-gray-200 bg-gray-50 px-5 py-3 space-y-1 cost-total-reveal" style={{ animationDelay: `${draft.items.length * 120 + 200}ms` }}>
+          <div className="flex justify-between text-sm text-gray-600">
+            <span>Subtotal</span>
+            <span>{fmt(draft.subtotal)}</span>
+          </div>
+          <div className="flex justify-between text-sm text-gray-600">
+            <span>Tax (est.)</span>
+            <span>{fmt(draft.tax)}</span>
+          </div>
+          <div className="flex justify-between text-base font-bold text-gray-900 pt-1 border-t border-gray-200">
+            <span>Total</span>
+            <span>{fmt(draft.total)}</span>
+          </div>
+          {draft.negotiation_round > 0 && (
+            <p className="text-xs text-green-600 font-medium">
+              ✨ Special offer — {draft.discount_applied}% discount applied
+            </p>
+          )}
         </div>
-        <div className="flex justify-between text-sm text-gray-600">
-          <span>Tax (est.)</span>
-          <span>{fmt(draft.tax)}</span>
+      ) : (
+        <div className="border-t border-gray-200 bg-gray-50 px-5 py-3 cost-total-reveal" style={{ animationDelay: `${draft.items.length * 120 + 200}ms` }}>
+          <p className="text-xs text-gray-500 text-center">Pricing will be confirmed once the proposal is generated</p>
         </div>
-        <div className="flex justify-between text-base font-bold text-gray-900 pt-1 border-t border-gray-200">
-          <span>Total</span>
-          <span>{fmt(draft.total)}</span>
-        </div>
-        {draft.negotiation_round > 0 && (
-          <p className="text-xs text-green-600 font-medium">
-            ✨ Special offer — {draft.discount_applied}% discount applied
-          </p>
-        )}
-      </div>
+      )}
 
       {/* Notes */}
       {draft.notes && (
@@ -2215,10 +2459,10 @@ function TypingIndicator() {
 // ─── Rich Tool Result Cards ───
 
 const SPACE_IMAGES: Record<string, string> = {
-  'Grand Ballroom': '/images/Banquet Grand.webp',
-  'Executive Boardroom': '/images/Boardroom Grand.jpg',
+  'Grand Ballroom': '/images/Banquet%20Grand.webp',
+  'Executive Boardroom': '/images/Boardroom%20Grand.jpg',
   'Rooftop Garden': '/images/decoration.jpeg',
-  'Conference Hall A': '/images/microphone and speakers.webp',
+  'Conference Hall A': '/images/microphone%20and%20speakers.webp',
   'The Grand Restaurant': '/images/Dinner.jpg',
 };
 
@@ -2796,19 +3040,19 @@ function formatRelativeTime(timestamp: number): string {
 
 const VENUE_IMAGES: Record<string, { url: string; label: string }> = {
   room: {
-    url: '/images/Double Room.jpg',
+    url: '/images/Double%20Room.jpg',
     label: 'Hotel Room / Suite',
   },
   boardroom: {
-    url: '/images/Boardroom Grand.jpg',
+    url: '/images/Boardroom%20Grand.jpg',
     label: 'Boardroom',
   },
   banquet: {
-    url: '/images/Banquet Grand.webp',
+    url: '/images/Banquet%20Grand.webp',
     label: 'Banquet Hall',
   },
   conference: {
-    url: '/images/microphone and speakers.webp',
+    url: '/images/microphone%20and%20speakers.webp',
     label: 'Conference Room',
   },
   garden: {
@@ -2820,7 +3064,7 @@ const VENUE_IMAGES: Record<string, { url: string; label: string }> = {
     label: 'Restaurant / Dining',
   },
   suite: {
-    url: '/images/Suite Room.webp',
+    url: '/images/Suite%20Room.webp',
     label: 'Suite Room',
   },
 };

@@ -34,11 +34,17 @@ export function useUser() {
 
 export function useProposals(search?: Record<string, string>) {
   const params = new URLSearchParams(search ?? {});
-  return useSWR(`/api/proposales/proposals?${params}`, fetcher);
+  return useSWR(`/api/proposales/proposals?${params}`, fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: true,
+  });
 }
 
 export function useProposal(uuid: string) {
-  return useSWR(uuid ? `/api/proposales/proposals/${uuid}` : null, fetcher);
+  return useSWR(uuid ? `/api/proposales/proposals/${uuid}` : null, fetcher, {
+    refreshInterval: 15000,
+    revalidateOnFocus: true,
+  });
 }
 
 export function useContent(options?: {
@@ -88,6 +94,19 @@ export async function apiPost(url: string, body: unknown) {
 export async function apiPut(url: string, body: unknown) {
   const res = await fetch(url, {
     method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: 'Request failed' } }));
+    throw new Error(err.error?.message ?? 'Request failed');
+  }
+  return res.json();
+}
+
+export async function apiPatch(url: string, body: unknown) {
+  const res = await fetch(url, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });

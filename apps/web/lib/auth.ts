@@ -30,15 +30,12 @@ function validatePasskey(passkey: string): { role: UserRole; label: string; stab
 
   // Check sales passkey
   if (process.env.SALES_PASSKEY_1 && trimmed === process.env.SALES_PASSKEY_1) {
-    return { role: 'sales', label: 'Sales User', stableUid: 'sales-1' };
+    return { role: 'sales', label: 'Sales Admin', stableUid: 'email:rajjose17@gmail.com' };
   }
 
-  // Check user passkeys 1-5
-  for (let i = 1; i <= 5; i++) {
-    const envKey = process.env[`USER_PASSKEY_${i}`];
-    if (envKey && trimmed === envKey) {
-      return { role: 'customer', label: `User ${i}`, stableUid: `user-${i}` };
-    }
+  // Check user passkey
+  if (process.env.USER_PASSKEY_1 && trimmed === process.env.USER_PASSKEY_1) {
+    return { role: 'customer', label: 'Guest', stableUid: 'email:ponraja@gmail.com' };
   }
 
   return null;
@@ -94,7 +91,7 @@ export async function createPasskeySession(
   if (result) {
     await connectDB();
     // Use configured email/name for passkey users
-    const email = result.role === 'customer' ? 'toponraja@gmail.com' : 'rajjose17@gmail.com';
+    const email = result.role === 'customer' ? 'ponraja@gmail.com' : 'rajjose17@gmail.com';
     const name = result.role === 'customer' ? 'Ponraj' : 'Sales Admin';
 
     let user = await User.findOne({ email });
@@ -148,7 +145,7 @@ export async function getSession(): Promise<string | null> {
 
   const nextAuthSession = await getServerSession(authOptions);
   if (nextAuthSession?.user?.email) {
-    return `google:${nextAuthSession.user.email}`;
+    return `email:${nextAuthSession.user.email.toLowerCase()}`;
   }
 
   return null;

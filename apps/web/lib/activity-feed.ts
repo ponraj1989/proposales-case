@@ -15,6 +15,7 @@ export interface ActivityFeedEvent {
 
 const ACTIVITY_FEED_KEY = 'activity:feed';
 export const ACTIVITY_FEED_CHANNEL = 'activity:feed:events';
+export const ACTIVITY_FEED_SEEN_KEY = 'activity:feed:seen';
 const ACTIVITY_FEED_MAX = 200;
 
 export async function listActivityFeed(limit = 40): Promise<ActivityFeedEvent[]> {
@@ -61,6 +62,10 @@ export async function pushActivityFeedEvent(
     await redis.lpush(ACTIVITY_FEED_KEY, JSON.stringify(payload));
     await redis.ltrim(ACTIVITY_FEED_KEY, 0, ACTIVITY_FEED_MAX - 1);
     await redis.publish(ACTIVITY_FEED_CHANNEL, JSON.stringify(payload));
+    // Register dedup key so periodic API refresh won't duplicate this event
+    if (payload.proposalUuid) {
+      await redis.sadd(ACTIVITY_FEED_SEEN_KEY, `${payload.proposalUuid}:${payload.type}`);
+    }
   } catch {
     return;
   }

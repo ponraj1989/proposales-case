@@ -28,7 +28,7 @@ import {
 export { systemPrompt, customerPrompt, salesAdvisorPrompt, proposalWriterPrompt } from './prompts';
 export * from './tools';
 
-/** Full tool set for sales users */
+/** Full tool set for sales users — analytics & data visualization only, no proposal creation */
 export function createAllTools(
   sdk: ProposalesSDK,
   userInfo?: { email?: string; name?: string },
@@ -38,11 +38,8 @@ export function createAllTools(
   return {
     searchProposals: createSearchProposalsTool(sdk),
     getProposal: createGetProposalTool(sdk),
-    createProposal: createCreateProposalTool(sdk),
     patchProposal: createPatchProposalTool(sdk),
     reviseProposal: createReviseProposalTool(sdk),
-    generateProposalDraft: createGenerateProposalDraftTool(sdk, userInfo),
-    reviseProposalPricing: createReviseProposalPricingTool(sdk, userInfo),
     listContent: createListContentTool(sdk),
     listCompanies: createListCompaniesTool(sdk),
     listTemplates: createListTemplatesTool(sdk),
@@ -50,13 +47,10 @@ export function createAllTools(
     renderChart: createRenderChartTool(),
     queryProposalData: createQueryProposalDataTool(sdk),
     suggestPricing: createSuggestPricingTool(sdk),
-    extractEventDetails: createExtractEventDetailsTool(),
-    acceptProposal: createAcceptProposalTool(sdk, userInfo),
     checkAvailability: createCheckAvailabilityTool(pmsService),
     calculateEventPrice: createCalculateEventPriceTool(pmsService),
     getMonthAvailability: createGetMonthAvailabilityTool(pmsService),
     suggestFloorPlan: createSuggestFloorPlanTool(pmsService),
-    requestUserInput: createRequestUserInputTool(),
     generateImage: createGenerateImageTool(),
   };
 }

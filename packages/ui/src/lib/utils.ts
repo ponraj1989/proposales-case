@@ -15,16 +15,18 @@ export function formatCurrency(cents: number, currency = 'EUR'): string {
 }
 
 export function formatDate(timestamp: number): string {
+  const ms = timestamp > 1e12 ? timestamp : timestamp * 1000;
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-  }).format(new Date(timestamp * 1000));
+  }).format(new Date(ms));
 }
 
 export function formatRelativeTime(timestamp: number): string {
+  const ms = timestamp > 1e12 ? timestamp : timestamp * 1000;
   const now = Date.now();
-  const diff = now - timestamp * 1000;
+  const diff = now - ms;
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);

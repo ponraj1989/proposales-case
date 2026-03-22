@@ -122,6 +122,11 @@ const BASE_PRICES: Record<Space['type'], number> = {
   outdoor: 200000,     // €2,000
 };
 
+// ─── Content Price Map (matches Proposales dashboard pricing) ───
+// Prices are in cents. Unit types: 'person' | 'day' | 'unit'
+export { getContentPrice, formatContentPrice, type ContentPrice } from './content-prices';
+import { getContentPrice as lookupContentPrice } from './content-prices';
+
 function contentToSeedSpace(item: ContentItem): Partial<IPmsSpace> | null {
   const title = (item.title?.en || Object.values(item.title || {})[0] || '').toLowerCase();
   const desc = (item.description?.en || Object.values(item.description || {})[0] || '');
@@ -129,13 +134,16 @@ function contentToSeedSpace(item: ContentItem): Partial<IPmsSpace> | null {
   for (const [keyword, meta] of Object.entries(SPACE_KEYWORDS)) {
     if (title.includes(keyword)) {
       const slug = title.replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      // Use the content price map so PMS availability matches the Spaces tab
+      const contentPrice = lookupContentPrice(title);
+      const priceCents = contentPrice ? contentPrice.price_cents : BASE_PRICES[meta.type];
       return {
         spaceId: `space-${slug}-${item.variation_id}`,
         venueId: 'venue-1',
         name: item.title?.en || Object.values(item.title || {})[0] || 'Unnamed Space',
         type: meta.type,
         capacity: meta.capacity,
-        basePriceCents: BASE_PRICES[meta.type],
+        basePriceCents: priceCents,
         amenities: meta.amenities,
         description: desc || `${item.title?.en || 'Space'} — available for events and bookings.`,
         contentVariationId: item.variation_id,
@@ -214,7 +222,7 @@ function dbHoldToHoldEntry(doc: IPmsHold): HoldEntry {
 let seeded = false;
 
 // Bump this version whenever SPACE_KEYWORDS change to force a re-seed
-const SEED_VERSION = 3;
+const SEED_VERSION = 4;
 
 /** Seed PMS data into MongoDB if not already present */
 export async function seedPmsData(): Promise<void> {
@@ -394,25 +402,9 @@ export async function isSlotAvailable(
   return { available: true };
 }
 
-function calculatePrice(space: Space, date: string, slot: TimeSlot, guests: number): number {
-  let price = space.base_price_cents;
-
-  const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  if (dayOfWeek === 0 || dayOfWeek === 6) price = Math.round(price * 1.2);
-
-  const month = d.getMonth();
-  if (month >= 5 && month <= 7) price = Math.round(price * 1.15);
-
-  if (slot.id === 'full-day') price = Math.round(price * 1.5);
-  else if (slot.id === 'evening') price = Math.round(price * 1.1);
-  else if (slot.id === 'morning') price = Math.round(price * 0.9);
-
-  const utilizationRatio = guests / space.capacity;
-  if (utilizationRatio > 0.8) price = Math.round(price * 1.1);
-  if (utilizationRatio < 0.3) price = Math.round(price * 0.9);
-
-  return price;
+function calculatePrice(space: Space, _date: string, _slot: TimeSlot, _guests: number): number {
+  // Return the base price directly — matches the Spaces tab pricing
+  return space.base_price_cents;
 }
 
 export async function checkAvailability(query: AvailabilityQuery): Promise<AvailableSlot[]> {
@@ -433,25 +425,42 @@ export async function checkAvailability(query: AvailabilityQuery): Promise<Avail
   };
   const preferred = query.event_type ? typePreference[query.event_type.toLowerCase()] : undefined;
 
+  const hasSlotFilter = Boolean(query.time_slot);
   const results: AvailableSlot[] = [];
 
   for (const space of suitableSpaces) {
-    const slotsToCheck = query.time_slot
+    const slotsToCheck = hasSlotFilter
       ? TIME_SLOTS.filter((ts) => ts.id === query.time_slot || ts.label.toLowerCase() === query.time_slot?.toLowerCase())
       : TIME_SLOTS;
+
+    let bestForSpace: AvailableSlot | null = null;
 
     for (const slot of slotsToCheck) {
       const slotStatus = await isSlotAvailable(space.id, query.date, slot.id);
       if (slotStatus.available) {
         const price = calculatePrice(space, query.date, slot, query.guests);
-        results.push({
+        const entry: AvailableSlot = {
           space,
           date: query.date,
           time_slot: slot,
           price_cents: price,
           price_formatted: formatEUR(price),
-        });
+        };
+
+        if (hasSlotFilter) {
+          // When user picked a specific time slot, show all matching results
+          results.push(entry);
+        } else {
+          // No slot filter — keep only the cheapest slot per space to avoid duplicates
+          if (!bestForSpace || price < bestForSpace.price_cents) {
+            bestForSpace = entry;
+          }
+        }
       }
+    }
+
+    if (!hasSlotFilter && bestForSpace) {
+      results.push(bestForSpace);
     }
   }
 

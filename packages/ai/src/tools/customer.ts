@@ -156,7 +156,7 @@ export function createAcceptProposalTool(
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
 
-      const blocks = di.items.map((item) => ({ content_id: item.content_id }));
+      const blocks = di.items.map((item) => ({ content_id: item.content_id, quantity: item.quantity }));
 
       let proposalUuid: string | null = null;
       let proposalUrl: string | null = null;
@@ -298,7 +298,7 @@ export function createAcceptProposalTool(
           guests: di.guests,
         } : undefined,
         message: proposalUuid
-          ? `Your proposal "${di.title}"${formattedAmount ? ` (${formattedAmount})` : ''} has been created! 🎉 You can track it on the My Proposals page.`
+          ? `Your proposal "${di.title}"${formattedAmount ? ` (${formattedAmount})` : ''} has been created! 🎉 Our sales team will review and send the full proposal to **${recipientEmail}** shortly. Please check your email to review, accept, and e-sign the proposal. You can also track it on the **My Proposals** page.`
           : 'Proposal creation failed. Please try again.',
       };
     },
