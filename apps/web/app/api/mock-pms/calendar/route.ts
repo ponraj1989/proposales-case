@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import connectDB from '@/lib/mongodb';
+import { PmsInventory, PmsHold } from '@/lib/models';
 import * as pmsDb from '@/lib/pms-db';
 
 // GET /api/mock-pms/calendar?year=2026&month=4&guests=100&space_id=space-grand-ballroom
@@ -27,6 +29,10 @@ export async function GET(request: Request) {
     );
   }
 
+  // Ensure PMS data is seeded
+  await pmsDb.seedPmsData();
+  await connectDB();
+
   const jsMonth = month - 1;
   const daysInMonth = new Date(year, jsMonth + 1, 0).getDate();
   const allSpaces = await pmsDb.getSpaces();
@@ -37,6 +43,32 @@ export async function GET(request: Request) {
       : allSpaces;
 
   const TIME_SLOT_IDS = ['morning', 'afternoon', 'evening'];
+  const spaceIds = spacesToCheck.map((s) => s.id);
+
+  // Build date range for the month
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+
+  // Batch query: all booked inventory for this month + spaces in 2 queries
+  const [bookedSlots, activeHoldSlots] = await Promise.all([
+    PmsInventory.find({
+      spaceId: { $in: spaceIds },
+      date: { $gte: startDate, $lte: endDate },
+      timeSlotId: { $in: TIME_SLOT_IDS },
+      booked: true,
+    }).lean(),
+    PmsHold.find({
+      spaceId: { $in: spaceIds },
+      date: { $gte: startDate, $lte: endDate },
+      timeSlotId: { $in: TIME_SLOT_IDS },
+      status: 'held',
+      expiresAt: { $gt: new Date() },
+    }).lean(),
+  ]);
+
+  // Build lookup sets for O(1) checks
+  const bookedSet = new Set(bookedSlots.map((s) => `${s.spaceId}|${s.date}|${s.timeSlotId}`));
+  const heldSet = new Set(activeHoldSlots.map((s) => `${s.spaceId}|${s.date}|${s.timeSlotId}`));
 
   const days: {
     date: string;
@@ -52,18 +84,13 @@ export async function GET(request: Request) {
     const dateStr = dateObj.toISOString().split('T')[0];
     const dow = dateObj.getDay();
 
-    const results = await pmsDb.checkAvailability({
-      date: dateStr,
-      guests: guests || 1,
-    });
-
-    // Count available slots across matching spaces
     let available = 0;
     let total = 0;
     for (const space of spacesToCheck) {
       for (const slotId of TIME_SLOT_IDS) {
         total++;
-        if (results.some((r) => r.space.id === space.id && r.time_slot.id === slotId)) {
+        const key = `${space.id}|${dateStr}|${slotId}`;
+        if (!bookedSet.has(key) && !heldSet.has(key)) {
           available++;
         }
       }
@@ -75,8 +102,9 @@ export async function GET(request: Request) {
     days.push({ date: dateStr, day: d, dow, status, available_count: available, total_count: total });
   }
 
-  const activeHolds = await pmsDb.getActiveHolds();
-  const holdsForMonth = activeHolds.filter((h) => {
+  // Holds for the month
+  const allActiveHolds = await pmsDb.getActiveHolds();
+  const holdsForMonth = allActiveHolds.filter((h) => {
     const hDate = new Date(h.date);
     return hDate.getFullYear() === year && hDate.getMonth() === jsMonth;
   });

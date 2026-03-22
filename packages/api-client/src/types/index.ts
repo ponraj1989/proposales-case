@@ -13,6 +13,103 @@ export interface SingleResponse<T> {
   data: T;
 }
 
+export type IntegrationFieldIconName =
+  | 'person'
+  | 'attendees'
+  | 'accommodation'
+  | 'chevron-right'
+  | 'add';
+
+export type IntegrationSelectField = {
+  type: 'select';
+  id: string;
+  helpLabel?: string;
+  defaultValue?: string;
+  placeholder?: string;
+  required?: boolean;
+  readOnly?: boolean;
+  options?: {
+    name: string;
+    value?: string;
+  }[];
+};
+
+export type IntegrationTextField = {
+  type: 'text' | 'url' | 'tel' | 'email' | 'password';
+  id: string;
+  helpLabel?: string;
+  defaultValue?: string;
+  placeholder?: string;
+  required?: boolean;
+  readOnly?: boolean;
+  icon?: IntegrationFieldIconName;
+};
+
+export type IntegrationNumberField = {
+  type: 'number';
+  id: string;
+  defaultValue?: number | string;
+  helpLabel?: string;
+  placeholder?: string;
+  required?: boolean;
+  readOnly?: boolean;
+  icon?: IntegrationFieldIconName;
+  min?: number;
+  max?: number;
+  integerOnly?: boolean;
+};
+
+export type IntegrationHiddenField = {
+  type: 'hidden';
+  defaultValue?: string | number | boolean;
+};
+
+export type IntegrationSwitchField = {
+  type: 'switch';
+  id: string;
+  defaultValue?: boolean;
+  helpLabel?: string;
+  readOnly?: boolean;
+};
+
+export type IntegrationLinkButtonField = {
+  type: 'linkButton';
+  label: string;
+  href: string;
+  icon: IntegrationFieldIconName;
+};
+
+export type IntegrationDividerField = {
+  type: 'divider';
+  text?: string;
+};
+
+export type IntegrationHeaderField = {
+  type: 'header';
+  text: string;
+};
+
+export type IntegrationTextBodyField = {
+  type: 'textBody';
+  text: string;
+  markdown?: boolean;
+};
+
+export type IntegrationField =
+  | IntegrationSelectField
+  | IntegrationTextField
+  | IntegrationNumberField
+  | IntegrationHiddenField
+  | IntegrationSwitchField
+  | IntegrationLinkButtonField
+  | IntegrationDividerField
+  | IntegrationHeaderField
+  | IntegrationTextBodyField;
+
+export type IntegrationMetadata = Record<string, unknown> & {
+  integration_fields?: IntegrationField[];
+};
+
 // ─── Proposal ───
 export type ProposalStatus =
   | 'draft'
@@ -41,7 +138,7 @@ export interface Recipient {
     integration?: {
       id: number;
       contactId: string;
-      metadata: Record<string, unknown>;
+      metadata: IntegrationMetadata;
     };
   };
 }
@@ -322,5 +419,5 @@ export interface Attachment {
 
 // ─── RFP/Inbox ───
 export interface RfpResponse {
-  id: number;
+  id: number | string;
 }

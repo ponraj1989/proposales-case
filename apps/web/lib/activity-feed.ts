@@ -7,9 +7,14 @@ export interface ActivityFeedEvent {
   description: string;
   time: string;
   proposalUuid?: string;
+  proposalTitle?: string;
+  recipientName?: string;
+  amount?: number;
+  currency?: string;
 }
 
 const ACTIVITY_FEED_KEY = 'activity:feed';
+export const ACTIVITY_FEED_CHANNEL = 'activity:feed:events';
 const ACTIVITY_FEED_MAX = 200;
 
 export async function listActivityFeed(limit = 40): Promise<ActivityFeedEvent[]> {
@@ -46,11 +51,16 @@ export async function pushActivityFeedEvent(
     title: event.title,
     description: event.description,
     proposalUuid: event.proposalUuid,
+    proposalTitle: event.proposalTitle,
+    recipientName: event.recipientName,
+    amount: event.amount,
+    currency: event.currency,
   };
 
   try {
     await redis.lpush(ACTIVITY_FEED_KEY, JSON.stringify(payload));
     await redis.ltrim(ACTIVITY_FEED_KEY, 0, ACTIVITY_FEED_MAX - 1);
+    await redis.publish(ACTIVITY_FEED_CHANNEL, JSON.stringify(payload));
   } catch {
     return;
   }

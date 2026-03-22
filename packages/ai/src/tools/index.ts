@@ -3,6 +3,7 @@ export {
   createGetProposalTool,
   createCreateProposalTool,
   createPatchProposalTool,
+  createReviseProposalTool,
   createGenerateProposalDraftTool,
   createReviseProposalPricingTool,
 } from './proposals';
@@ -26,6 +27,10 @@ export {
   createRequestUserInputTool,
   type SendEsignEmailFn,
 } from './customer';
+
+export {
+  createGenerateImageTool,
+} from './images';
 
 export {
   createCheckAvailabilityTool,

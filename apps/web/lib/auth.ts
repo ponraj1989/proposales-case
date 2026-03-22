@@ -8,6 +8,7 @@ import { User } from '@/lib/models';
 const SESSION_COOKIE = 'proposales_session';
 const ROLE_COOKIE = 'proposales_role';
 const USER_ID_COOKIE = 'proposales_uid';
+const STABLE_UID_COOKIE = 'proposales_stable_uid';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 export type UserRole = 'customer' | 'sales';
@@ -24,19 +25,19 @@ function getSalesEmails(): string[] {
 /**
  * Validate a passkey against env-configured passkeys.
  */
-function validatePasskey(passkey: string): { role: UserRole; label: string } | null {
+function validatePasskey(passkey: string): { role: UserRole; label: string; stableUid: string } | null {
   const trimmed = passkey.trim();
 
   // Check sales passkey
   if (process.env.SALES_PASSKEY_1 && trimmed === process.env.SALES_PASSKEY_1) {
-    return { role: 'sales', label: 'Sales User' };
+    return { role: 'sales', label: 'Sales User', stableUid: 'sales-1' };
   }
 
   // Check user passkeys 1-5
   for (let i = 1; i <= 5; i++) {
     const envKey = process.env[`USER_PASSKEY_${i}`];
     if (envKey && trimmed === envKey) {
-      return { role: 'customer', label: `User ${i}` };
+      return { role: 'customer', label: `User ${i}`, stableUid: `user-${i}` };
     }
   }
 
@@ -67,6 +68,7 @@ function setCookies(
   token: string,
   role: UserRole,
   userId?: string,
+  stableUid?: string,
 ) {
   const opts = {
     httpOnly: true,
@@ -78,6 +80,7 @@ function setCookies(
   cookieStore.set(SESSION_COOKIE, token, opts);
   cookieStore.set(ROLE_COOKIE, role, opts);
   if (userId) cookieStore.set(USER_ID_COOKIE, userId, opts);
+  if (stableUid) cookieStore.set(STABLE_UID_COOKIE, stableUid, opts);
 }
 
 /**
@@ -91,8 +94,8 @@ export async function createPasskeySession(
   if (result) {
     await connectDB();
     // Use configured email/name for passkey users
-    const email = result.role === 'customer' ? 'rajjose17@gmail.com' : `${result.label.toLowerCase().replace(/\s+/g, '-')}@passkey.local`;
-    const name = result.role === 'customer' ? 'rag' : result.label;
+    const email = result.role === 'customer' ? 'toponraja@gmail.com' : 'rajjose17@gmail.com';
+    const name = result.role === 'customer' ? 'Ponraj' : 'Sales Admin';
 
     let user = await User.findOne({ email });
     if (!user) {
@@ -109,7 +112,7 @@ export async function createPasskeySession(
 
     const sessionToken = hashKey(passkey + Date.now().toString());
     const cookieStore = await cookies();
-    setCookies(cookieStore, sessionToken, result.role, user._id.toString());
+    setCookies(cookieStore, sessionToken, result.role, user._id.toString(), result.stableUid);
 
     return { success: true, role: result.role };
   }
@@ -118,7 +121,7 @@ export async function createPasskeySession(
   if (validateApiKeyHash(passkey)) {
     const sessionToken = hashKey(passkey + Date.now().toString());
     const cookieStore = await cookies();
-    setCookies(cookieStore, sessionToken, 'sales');
+    setCookies(cookieStore, sessionToken, 'sales', undefined, 'sales-legacy');
     return { success: true, role: 'sales' };
   }
 
@@ -137,7 +140,11 @@ export async function createSession(apiKey: string): Promise<boolean> {
 export async function getSession(): Promise<string | null> {
   const cookieStore = await cookies();
   const apiKeySession = cookieStore.get(SESSION_COOKIE)?.value;
-  if (apiKeySession) return apiKeySession;
+  if (apiKeySession) {
+    // Return stable UID so conversations persist across logins
+    const stableUid = cookieStore.get(STABLE_UID_COOKIE)?.value;
+    return stableUid || apiKeySession;
+  }
 
   const nextAuthSession = await getServerSession(authOptions);
   if (nextAuthSession?.user?.email) {
@@ -260,4 +267,5 @@ export async function clearSession(): Promise<void> {
   cookieStore.delete(SESSION_COOKIE);
   cookieStore.delete(ROLE_COOKIE);
   cookieStore.delete(USER_ID_COOKIE);
+  cookieStore.delete(STABLE_UID_COOKIE);
 }

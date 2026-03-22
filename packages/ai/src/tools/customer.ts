@@ -1,7 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import type { ProposalesSDK } from '@proposales/api-client';
-import { confirmHold } from './pms';
+import type { ProposalesSDK, Proposal } from '@proposales/api-client';
+import { holdSpace } from './pms';
 
 /**
  * Tool: requestUserInput
@@ -90,115 +90,216 @@ export function createExtractEventDetailsTool() {
   });
 }
 
-/** Callback type for sending e-sign emails */
+/** Callback type for sending e-sign emails (used by sales flow only) */
 export type SendEsignEmailFn = (options: {
   to: string;
   recipientName: string;
   proposalTitle: string;
   totalAmount: string;
   esignUrl: string;
-}) => Promise<boolean>;
+  proposalUuid?: string;
+  sentBy?: string;
+}) => Promise<{ sent: boolean; esignId?: string; esignUrl?: string }>;
 
 /**
  * Tool: acceptProposal
- * Marks an existing Proposales proposal as accepted via the API.
- * Sends an e-sign email to the recipient in parallel.
- * Returns the proposal URL for e-signing (shown in chat + sent via email).
+ * Creates the actual proposal in the Proposales system when the user accepts the draft.
+ * The proposal is NOT created during generateProposalDraft — only here on explicit accept.
+ * Also holds the space for 7 days if space booking details are provided.
  */
 export function createAcceptProposalTool(
   sdk?: ProposalesSDK,
   userInfo?: { email?: string; name?: string },
-  sendEsignEmail?: SendEsignEmailFn,
 ) {
   return tool({
     description:
-      'Accept the current proposal and confirm the booking. The proposal already exists in the Proposales system (created when the draft was generated). Pass the proposal UUID from the draft so it can be updated to "accepted" status. This will also send an e-sign email to the recipient. Also pass ALL key details for the confirmation message.',
+      'Create and finalize a proposal in the Proposales system after the user accepts the draft. Call this ONLY when the user clicks Accept & Generate Proposal or explicitly confirms. Pass the draft_input from the generateProposalDraft result to create the actual proposal with real pricing. Returns the created proposal with UUID, URL, and finalized prices.',
     inputSchema: z.object({
-      proposalTitle: z.string().describe('Title of the accepted proposal'),
-      totalAmount: z.number().describe('Total amount in dollars'),
+      proposalTitle: z.string().describe('Title of the proposal from the draft'),
       currency: z.string().default('USD').describe('Currency code'),
-      proposalUuid: z.string().optional().describe('UUID of the proposal from the draft (returned by generateProposalDraft or reviseProposalPricing)'),
-      proposalUrl: z.string().optional().describe('URL of the proposal from the draft'),
+      // Full draft creation params forwarded from generateProposalDraft
+      draft_input: z.object({
+        title: z.string(),
+        description: z.string(),
+        items: z.array(z.object({
+          content_id: z.number(),
+          quantity: z.number(),
+        })).min(1),
+        currency: z.string().optional(),
+        recipient_name: z.string(),
+        recipient_email: z.string(),
+        recipient_company: z.string().optional().nullable(),
+        recipient_phone: z.string().optional().nullable(),
+        company_id: z.number(),
+        language: z.string().optional(),
+        notes: z.string().optional().nullable(),
+        venue_type: z.string().optional().nullable(),
+        invoicing_enabled: z.boolean().optional().nullable(),
+        tax_options: z.object({
+          mode: z.enum(['standard', 'simplified', 'tax-free', 'none']).optional(),
+          tax_included: z.boolean().optional(),
+          tax_label_key: z.string().optional(),
+        }).optional().nullable(),
+        background_image: z.object({ id: z.number(), uuid: z.string() }).optional().nullable(),
+        background_video: z.object({ id: z.number(), uuid: z.string() }).optional().nullable(),
+        attachments: z.array(z.object({ id: z.number(), uuid: z.string() })).optional().nullable(),
+        space_id: z.string().optional().nullable(),
+        event_date: z.string().optional().nullable(),
+        time_slot_id: z.string().optional().nullable(),
+        guests: z.number().optional().nullable(),
+      }).describe('The draft_input object returned by generateProposalDraft — forward it here unchanged'),
     }),
     execute: async (input) => {
-      const finalUuid = input.proposalUuid || null;
-      // Build e-sign URL from UUID
-      let finalUrl = finalUuid ? `https://esign.proposales.com/v/${finalUuid}` : (input.proposalUrl || null);
+      const di = input.draft_input;
+      const recipientEmail = di.recipient_email;
+      const nameParts = (di.recipient_name || '').split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
 
-      const recipientEmail = userInfo?.email || '';
-      const recipientName = userInfo?.name || 'Guest';
-      const formattedAmount = new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: input.currency,
-      }).format(input.totalAmount);
+      const blocks = di.items.map((item) => ({ content_id: item.content_id }));
 
-      // Run API patch and email send in parallel
-      const patchPromise = (sdk && input.proposalUuid)
-        ? sdk.proposals.patchData(input.proposalUuid, {
-            data: {
-              status: 'accepted',
-              accepted_at: new Date().toISOString(),
-              accepted_by: userInfo?.email || null,
+      let proposalUuid: string | null = null;
+      let proposalUrl: string | null = null;
+      let resolvedItems: { name: string; description: string; quantity: number; unit_price: number; total: number; content_id: number }[] = [];
+      let subtotal = 0;
+      let tax = 0;
+      let total = 0;
+
+      if (sdk) {
+        try {
+          // Create the actual proposal in Proposales
+          const apiResult = await sdk.proposals.create({
+            company_id: di.company_id,
+            language: di.language || 'en',
+            title_md: di.title,
+            description_md: di.description,
+            creator_email: userInfo?.email,
+            contact_email: recipientEmail,
+            recipient: {
+              first_name: firstName,
+              last_name: lastName,
+              email: recipientEmail,
+              phone: di.recipient_phone || undefined,
+              company_name: di.recipient_company || undefined,
             },
-          }).then(async () => {
-            // Fetch the proposal to get the latest URL
-            const proposalData = await sdk.proposals.get(input.proposalUuid!);
-            const proposal = (proposalData as { data?: { url?: string } })?.data;
-            // Keep e-sign URL based on UUID (already set above)
-          }).catch((err) => {
-            console.error('Failed to update proposal via API:', err instanceof Error ? err.message : String(err));
-          })
-        : Promise.resolve();
+            blocks,
+            data: {
+              source: 'chat_assist',
+              venue_type: di.venue_type ?? null,
+              notes: di.notes ?? '',
+              status: 'active',
+              negotiation_round: 0,
+              discount_applied: 0,
+            },
+            invoicing_enabled: di.invoicing_enabled || undefined,
+            tax_options: di.tax_options || undefined,
+            background_image: di.background_image || undefined,
+            background_video: di.background_video || undefined,
+            attachments: di.attachments || undefined,
+          });
 
-      const emailPromise = (sendEsignEmail && finalUrl && recipientEmail)
-        ? sendEsignEmail({
-            to: recipientEmail,
-            recipientName,
-            proposalTitle: input.proposalTitle,
-            totalAmount: formattedAmount,
-            esignUrl: finalUrl,
-          }).catch((err) => {
-            console.error('Failed to send e-sign email:', err instanceof Error ? err.message : String(err));
-            return false;
-          })
-        : Promise.resolve(false);
+          proposalUuid = apiResult?.proposal?.uuid ?? null;
 
-      const [, emailSent] = await Promise.all([patchPromise, emailPromise]);
+          // Fetch the created proposal to get real prices
+          if (proposalUuid) {
+            const fetchedResult = await sdk.proposals.get(proposalUuid);
+            const fetched: Proposal = fetchedResult.data;
+            proposalUrl = fetched.pdf_url ?? null;
 
-      // ─── Confirm the hold → book the space in PMS ───
-      let bookingConfirmation: { booking_ref?: string; error?: string } | null = null;
-      if (finalUuid) {
-        const holdResult = confirmHold(finalUuid);
-        if (holdResult.success) {
-          bookingConfirmation = { booking_ref: holdResult.booking_ref };
-        } else {
-          bookingConfirmation = { error: holdResult.error };
+            if (fetched.blocks?.length) {
+              resolvedItems = fetched.blocks.map((block, idx) => {
+                const qty = di.items[idx]?.quantity ?? block.quantity ?? 1;
+                const unitPriceCents = block.unit_value_with_discount_with_tax ?? 0;
+                const unitPrice = unitPriceCents / 100;
+                return {
+                  name: block.title ?? `Item ${idx + 1}`,
+                  description: block.description ?? '',
+                  quantity: qty,
+                  unit_price: unitPrice,
+                  total: Math.round(unitPrice * qty * 100) / 100,
+                  content_id: di.items[idx]?.content_id,
+                };
+              });
+            }
+
+            const valueWithTax = fetched.value_with_tax ?? 0;
+            const valueWithoutTax = fetched.value_without_tax ?? 0;
+            subtotal = valueWithoutTax / 100;
+            tax = Math.round(valueWithTax - valueWithoutTax) / 100;
+            total = valueWithTax / 100;
+          }
+        } catch (err) {
+          console.error('Failed to create proposal via API:', err instanceof Error ? err.message : String(err));
+          return {
+            type: 'proposal_status' as const,
+            proposal: {
+              title: di.title,
+              totalAmount: 0,
+              currency: input.currency,
+              status: 'error',
+              proposalUuid: null,
+              proposalUrl: null,
+            },
+            message: `Something went wrong creating the proposal. Please try again.`,
+          };
         }
       }
 
-      const emailNote = emailSent
-        ? ` An e-sign link has also been sent to ${recipientEmail}.`
-        : '';
-      const bookingNote = bookingConfirmation?.booking_ref
-        ? ` Space confirmed — booking ref: ${bookingConfirmation.booking_ref}.`
+      // Hold the space for 7 days if booking details are provided
+      let holdResult: { success: boolean; error?: string; expires_at?: string } | null = null;
+      if (di.space_id && di.event_date && di.time_slot_id && proposalUuid) {
+        const hold = holdSpace({
+          proposal_uuid: proposalUuid,
+          space_id: di.space_id,
+          date: di.event_date,
+          time_slot_id: di.time_slot_id,
+          guests: di.guests || 1,
+          event_type: di.venue_type || undefined,
+          contact_email: di.recipient_email,
+          contact_name: di.recipient_name,
+        });
+        holdResult = {
+          success: hold.success,
+          error: hold.error,
+          expires_at: hold.hold?.expires_at,
+        };
+      }
+
+      const formattedAmount = total > 0
+        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: input.currency }).format(total)
         : '';
 
       return {
-        type: 'booking_confirmed' as const,
-        booking: {
-          title: input.proposalTitle,
-          totalAmount: input.totalAmount,
+        type: 'proposal_status' as const,
+        proposal: {
+          title: di.title,
+          totalAmount: total,
           currency: input.currency,
-          status: 'confirmed',
-          proposalUuid: finalUuid,
-          proposalUrl: finalUrl,
-          booking_ref: bookingConfirmation?.booking_ref ?? null,
+          status: 'active',
+          proposalUuid,
+          proposalUrl,
+          items: resolvedItems,
+          subtotal,
+          tax,
+          total,
+          venue_type: di.venue_type,
         },
-        esign: finalUrl
-          ? { url: finalUrl, message: 'You can review and e-sign your proposal at the link below.' }
-          : null,
-        emailSent: !!emailSent,
-        message: `Booking confirmed! "${input.proposalTitle}" for ${formattedAmount}.${bookingNote}${finalUrl ? ` You can view and e-sign your proposal here: ${finalUrl}` : ' You\'ll receive a confirmation shortly.'}${emailNote}`,
+        recipient: {
+          name: di.recipient_name,
+          email: recipientEmail,
+          company: di.recipient_company ?? '',
+        },
+        company_id: di.company_id,
+        space_hold: holdResult ?? undefined,
+        booking_details: (di.space_id && di.event_date) ? {
+          space_id: di.space_id,
+          event_date: di.event_date,
+          time_slot_id: di.time_slot_id,
+          guests: di.guests,
+        } : undefined,
+        message: proposalUuid
+          ? `Your proposal "${di.title}"${formattedAmount ? ` (${formattedAmount})` : ''} has been created! 🎉 You can track it on the My Proposals page.`
+          : 'Proposal creation failed. Please try again.',
       };
     },
   });

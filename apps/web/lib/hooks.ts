@@ -16,6 +16,7 @@ export interface UserInfo {
   authenticated: boolean;
   role: 'customer' | 'sales';
   userId: string | null;
+  stableUid: string | null;
   name: string | null;
   email: string | null;
   image: string | null;
@@ -40,8 +41,19 @@ export function useProposal(uuid: string) {
   return useSWR(uuid ? `/api/proposales/proposals/${uuid}` : null, fetcher);
 }
 
-export function useContent() {
-  return useSWR('/api/proposales/content', fetcher);
+export function useContent(options?: {
+  include_archived?: boolean;
+  include_sources?: boolean;
+  product_id?: string;
+  variation_id?: string;
+}) {
+  const params = new URLSearchParams();
+  if (options?.include_archived) params.set('include_archived', 'true');
+  if (options?.include_sources) params.set('include_sources', 'true');
+  if (options?.product_id) params.set('product_id', options.product_id);
+  if (options?.variation_id) params.set('variation_id', options.variation_id);
+  const query = params.toString();
+  return useSWR(`/api/proposales/content${query ? `?${query}` : ''}`, fetcher);
 }
 
 export function useCompanies() {
@@ -86,8 +98,12 @@ export async function apiPut(url: string, body: unknown) {
   return res.json();
 }
 
-export async function apiDelete(url: string) {
-  const res = await fetch(url, { method: 'DELETE' });
+export async function apiDelete(url: string, body?: unknown) {
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: { message: 'Request failed' } }));
     throw new Error(err.error?.message ?? 'Request failed');
@@ -130,13 +146,42 @@ export interface ActivityFeedEvent {
   description: string;
   time: string;
   proposalUuid?: string;
+  proposalTitle?: string;
+  recipientName?: string;
+  amount?: number;
+  currency?: string;
 }
 
 export function useActivityFeed(enabled = true) {
   return useSWR<{ data: ActivityFeedEvent[] }>(enabled ? '/api/activity-feed' : null, fetcher, {
     revalidateOnFocus: true,
-    refreshInterval: 10000,
+    refreshInterval: 15000,
     dedupingInterval: 5000,
+  });
+}
+
+// ─── My Proposals (customer view) ───
+
+export interface MyProposal {
+  _id: string;
+  proposalUuid: string;
+  proposalTitle: string;
+  proposalUrl: string | null;
+  status: 'draft' | 'active' | 'sent' | 'viewed' | 'accepted' | 'signed' | 'rejected' | 'expired';
+  totalAmountCents: number;
+  currency: string;
+  venueType?: string;
+  eventDate?: string;
+  guests?: number;
+  viewedCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function useMyProposals() {
+  return useSWR<{ data: MyProposal[] }>('/api/my-proposals', fetcher, {
+    revalidateOnFocus: true,
+    dedupingInterval: 10000,
   });
 }
 

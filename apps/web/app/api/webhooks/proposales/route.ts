@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { bookSpace } from '@proposales/ai';
 import { getSDK } from '@/lib/sdk';
 import { pushActivityFeedEvent } from '@/lib/activity-feed';
+import connectDB from '@/lib/mongodb';
+import { UserProposal } from '@/lib/models';
 
 /**
  * POST /api/webhooks/proposales — Handle Proposales status updates
@@ -13,46 +15,106 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { event, uuid, status } = body;
+    const normalizedEvent = typeof event === 'string' ? event : '';
 
     const actor = body.name || body.contact_name || body.recipient_name || 'Customer';
 
-    if (event === 'proposal.viewed' && uuid) {
+    // Fetch actual proposal data for rich activity feed entries
+    let proposalTitle: string | undefined;
+    let recipientName: string | undefined;
+    let amount: number | undefined;
+    let currency: string | undefined;
+
+    if (uuid) {
+      try {
+        const sdk = getSDK();
+        const result = await sdk.proposals.get(uuid);
+        const proposal = result.data;
+        if (proposal) {
+          proposalTitle = proposal.title_md || proposal.title || undefined;
+          recipientName = proposal.recipient_name || proposal.contact_name || actor;
+          const totalCents = proposal.value_with_tax ?? proposal.value_without_tax ?? 0;
+          if (totalCents > 0) {
+            amount = totalCents / 100;
+            currency = proposal.currency || 'USD';
+          }
+        }
+      } catch {
+        // API fetch failed — continue with basic data
+      }
+    }
+
+    const fmtAmount = amount
+      ? new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(amount)
+      : '';
+    const displayName = recipientName || actor;
+    const displayTitle = proposalTitle ? `"${proposalTitle}"` : `proposal ${uuid?.slice(0, 8) ?? ''}`;
+
+    if (normalizedEvent === 'proposal.viewed' && uuid) {
       await pushActivityFeedEvent({
         type: 'viewed',
         title: 'Proposal Viewed',
-        description: `Proposal viewed by ${actor}`,
+        description: `${displayName} viewed ${displayTitle}${fmtAmount ? ` (${fmtAmount})` : ''}`,
         proposalUuid: uuid,
+        proposalTitle,
+        recipientName: displayName,
+        amount,
+        currency,
       });
     }
 
-    if (event === 'proposal.status_changed' && uuid) {
+    if ((normalizedEvent === 'proposal.sent' || (normalizedEvent === 'proposal.status_changed' && status === 'active')) && uuid) {
+      await pushActivityFeedEvent({
+        type: 'sent',
+        title: 'Proposal Sent',
+        description: `${displayTitle} sent to ${displayName}${fmtAmount ? ` (${fmtAmount})` : ''}`,
+        proposalUuid: uuid,
+        proposalTitle,
+        recipientName: displayName,
+        amount,
+        currency,
+      });
+    }
+
+    if ((normalizedEvent === 'proposal.signed' || (normalizedEvent === 'proposal.status_changed' && status === 'accepted')) && uuid) {
+      await pushActivityFeedEvent({
+        type: 'signed',
+        title: 'E-Sign Completed',
+        description: `${displayName} e-signed ${displayTitle}${fmtAmount ? ` — ${fmtAmount}` : ''}`,
+        proposalUuid: uuid,
+        proposalTitle,
+        recipientName: displayName,
+        amount,
+        currency,
+      });
+    }
+
+    if (normalizedEvent === 'proposal.status_changed' && uuid) {
       if (status === 'accepted') {
-        await pushActivityFeedEvent({
-          type: 'signed',
-          title: 'E-Sign Completed',
-          description: `${actor} completed e-sign`,
-          proposalUuid: uuid,
-        });
+        // handled above for unified support with proposal.signed
       } else if (status === 'active') {
-        await pushActivityFeedEvent({
-          type: 'sent',
-          title: 'Proposal Sent',
-          description: `Proposal sent to ${actor}`,
-          proposalUuid: uuid,
-        });
+        // handled above for unified support with proposal.sent
       } else if (status === 'expired') {
         await pushActivityFeedEvent({
           type: 'expired',
           title: 'Proposal Expired',
-          description: `Proposal ${uuid.slice(0, 8)} expired`,
+          description: `${displayTitle} expired${fmtAmount ? ` — ${fmtAmount} lost` : ''}`,
           proposalUuid: uuid,
+          proposalTitle,
+          recipientName: displayName,
+          amount,
+          currency,
         });
       } else {
         await pushActivityFeedEvent({
           type: 'updated',
           title: 'Proposal Updated',
-          description: `Proposal ${uuid.slice(0, 8)} changed to ${status || 'updated'}`,
+          description: `${displayTitle} changed to ${status || 'updated'}`,
           proposalUuid: uuid,
+          proposalTitle,
+          recipientName: displayName,
+          amount,
+          currency,
         });
       }
     }
@@ -60,7 +122,35 @@ export async function POST(request: Request) {
     // Log webhook for debugging
     console.log(`[Webhook] Proposales event=${event} uuid=${uuid} status=${status}`);
 
-    if (event === 'proposal.status_changed' && status === 'accepted' && uuid) {
+    // ─── Update UserProposal status in MongoDB ───
+    if (uuid) {
+      try {
+        await connectDB();
+        let newStatus: string | null = null;
+        if (normalizedEvent === 'proposal.viewed') newStatus = 'viewed';
+        if (normalizedEvent === 'proposal.sent' || (normalizedEvent === 'proposal.status_changed' && status === 'active')) newStatus = 'sent';
+        if (normalizedEvent === 'proposal.signed' || (normalizedEvent === 'proposal.status_changed' && status === 'accepted')) newStatus = 'signed';
+        if (normalizedEvent === 'proposal.status_changed' && status === 'expired') newStatus = 'expired';
+        if (normalizedEvent === 'proposal.status_changed' && status === 'rejected') newStatus = 'rejected';
+
+        if (newStatus) {
+          const updateFields: Record<string, unknown> = { status: newStatus };
+          // Also update proposalUrl if available from fetched proposal
+          if (proposalTitle) updateFields.proposalTitle = proposalTitle;
+          if (amount) updateFields.totalAmountCents = Math.round(amount * 100);
+          if (currency) updateFields.currency = currency;
+
+          await UserProposal.findOneAndUpdate(
+            { proposalUuid: uuid },
+            { $set: updateFields },
+          );
+        }
+      } catch (err) {
+        console.error('[Webhook] Failed to update UserProposal:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    if ((normalizedEvent === 'proposal.signed' || (normalizedEvent === 'proposal.status_changed' && status === 'accepted')) && uuid) {
       // Fetch the proposal to get booking details from its data field
       const sdk = getSDK();
       const result = await sdk.proposals.get(uuid);
@@ -93,8 +183,12 @@ export async function POST(request: Request) {
             await pushActivityFeedEvent({
               type: 'created',
               title: 'Inventory Reserved',
-              description: `Inventory reserved for proposal ${uuid.slice(0, 8)}`,
+              description: `Space booked for ${displayTitle}${recipientName ? ` — ${recipientName}` : ''}${fmtAmount ? ` (${fmtAmount})` : ''}`,
               proposalUuid: uuid,
+              proposalTitle,
+              recipientName: displayName,
+              amount,
+              currency,
             });
           }
 

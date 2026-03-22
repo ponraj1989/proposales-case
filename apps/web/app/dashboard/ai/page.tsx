@@ -41,6 +41,7 @@ interface ProposalDraft {
   language: string;
   notes: string;
   venue_type?: string | null;
+  header_image?: string | null;
   negotiation_round: number;
   max_negotiation_rounds: number;
   discount_applied: number;
@@ -58,6 +59,17 @@ interface StoredConversation {
 }
 
 // ─── Rich Tool Result Types ───
+
+interface ImageResult {
+  type: 'image_result';
+  success: boolean;
+  image?: {
+    base64: string;
+    mimeType: string;
+    label: string;
+  };
+  error?: string;
+}
 
 interface AvailabilityOption {
   space_name: string;
@@ -235,13 +247,33 @@ const SALES_SUGGESTIONS = [
 ];
 
 const GUEST_SUGGESTIONS = [
-  'What conference rooms are available for a team meeting?',
-  'I want to book a wedding venue for 200 guests',
-  'What are the prices for the banquet hall?',
-  'Tell me about your hotel rooms and suites',
-  'I need a conference room with AV equipment for 30 people',
-  'What dining and catering options do you offer?',
+  'I want to book an event — help me get started! 🎉',
+  'What are your room rates and packages? 💰',
+  'Show me your facilities — ballrooms, boardrooms, gardens 🏨',
+  'What meals and catering options do you offer? 🍽️',
+  'Do you provide transportation or shuttle services? 🚗',
+  'I want to make changes to an existing booking ✏️',
+  'What conference rooms do you have with AV setup? 🎓',
+  'Plan a wedding reception for 150 guests 💒',
 ];
+
+// ─── Restore stored messages to UIMessage format ───
+
+function restoreMessages(msgs: unknown[]): UIMessage[] {
+  if (!Array.isArray(msgs)) return [];
+  return msgs.map((m: unknown) => {
+    const msg = m as Record<string, unknown>;
+    const id = (msg.id as string) || crypto.randomUUID();
+    const role = (msg.role as UIMessage['role']) || 'assistant';
+    const content = (typeof msg.content === 'string' ? msg.content : '') as string;
+    const parts = Array.isArray(msg.parts) && msg.parts.length > 0
+      ? msg.parts
+      : content
+        ? [{ type: 'text' as const, text: content }]
+        : [];
+    return { id, role, parts, createdAt: msg.createdAt ? new Date(msg.createdAt as number) : new Date() } as UIMessage;
+  });
+}
 
 // ─── Main Component ───
 
@@ -252,33 +284,21 @@ export default function AIAssistantPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [input, setInput] = useState('');
   const [chatMode, setChatMode] = useState<'conversation' | 'form'>('conversation');
-  const [language, setLanguage] = useState('en');
+  const [language] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const browserLang = navigator.language?.split('-')[0];
+      const match = LANGUAGES.find((l) => l.code === browserLang);
+      return match ? match.code : 'en';
+    }
+    return 'en';
+  });
   const [isListening, setIsListening] = useState(false);
-  const [showLangPicker, setShowLangPicker] = useState(false);
+  const [isBootstrappingConversations, setIsBootstrappingConversations] = useState(true);
   const recognitionRef = useRef<any>(null);
+  const hasBootstrappedConversationsRef = useRef(false);
   const { data: userData } = useUser();
   const isSales = userData?.role === 'sales';
   const suggestions = isSales ? SALES_SUGGESTIONS : GUEST_SUGGESTIONS;
-
-  // Scope localStorage to current user
-  useEffect(() => {
-    if (userData?.userId) {
-      setCurrentUser(userData.userId);
-    }
-  }, [userData?.userId]);
-
-  // Initialize conversations from localStorage (re-run when user changes)
-  useEffect(() => {
-    if (userData?.userId) {
-      setCurrentUser(userData.userId);
-    }
-    const stored = loadConversations();
-    setConversations(stored);
-    if (stored.length > 0) {
-      setActiveConvId(stored[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userData?.userId]);
 
   const activeConversation = conversations.find((c) => c.id === activeConvId);
 
@@ -295,29 +315,119 @@ export default function AIAssistantPage() {
     }),
     messages: activeConversation?.messages ?? [],
     onFinish() {
-      setTimeout(() => {
-        setConversations(loadConversations());
-      }, 100);
+      // no-op: source of truth is server conversation state
     },
   });
 
   const isLoading = status === 'streaming' || status === 'submitted';
 
-  // Save messages when they change — debounced and only after streaming completes
+  const createConversationOnServer = useCallback(async (title = 'New Chat') => {
+    const response = await fetch('/api/ai/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to create conversation');
+    }
+    const payload = await response.json() as { data: StoredConversation };
+    const conversation: StoredConversation = {
+      ...payload.data,
+      messages: payload.data.messages ?? [],
+    };
+    setConversations((prev) => [conversation, ...prev.filter((c) => c.id !== conversation.id)]);
+    setActiveConvId(conversation.id);
+    setMessages([]);
+    return conversation;
+  }, [setMessages]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!userData?.authenticated) {
+      hasBootstrappedConversationsRef.current = false;
+      setIsBootstrappingConversations(false);
+      return;
+    }
+    if (hasBootstrappedConversationsRef.current) {
+      setIsBootstrappingConversations(false);
+      return;
+    }
+    hasBootstrappedConversationsRef.current = true;
+
+    const bootstrapConversations = async () => {
+      setIsBootstrappingConversations(true);
+      try {
+        const response = await fetch('/api/ai/conversations');
+        if (!response.ok) throw new Error('Failed to load conversations');
+        const payload = await response.json() as { data: StoredConversation[] };
+        const serverConversations = (payload.data ?? []).map((conversation) => ({
+          ...conversation,
+          messages: restoreMessages(conversation.messages ?? []),
+        }));
+        if (!mounted) return;
+        setConversations(serverConversations);
+        if (serverConversations.length > 0) {
+          setActiveConvId(serverConversations[0].id);
+          setMessages(serverConversations[0].messages ?? []);
+        } else {
+          const created = await createConversationOnServer('New Chat');
+          if (!mounted) return;
+          setActiveConvId(created.id);
+          setMessages(created.messages ?? []);
+        }
+      } catch {
+        if (!mounted) return;
+        setConversations([]);
+        hasBootstrappedConversationsRef.current = false;
+      } finally {
+        if (mounted) setIsBootstrappingConversations(false);
+      }
+    };
+
+    void bootstrapConversations();
+    return () => {
+      mounted = false;
+    };
+  }, [userData?.authenticated, createConversationOnServer, setMessages]);
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => isRenderableMessage(message)),
+    [messages],
+  );
+
+  // Save messages to server when they change — debounced and only after streaming completes
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (activeConvId && messages.length > 0) {
       const title = generateTitle(messages);
-      persistConversation(activeConvId, title, messages);
+      const nextSignature = messages
+        .map((message) => `${message.id}:${message.role}:${getMessageText(message)}`)
+        .join('|');
 
-      // If this is a brand-new conversation (not yet in the sidebar), add it now
       setConversations((prev) => {
-        if (prev.some((c) => c.id === activeConvId)) {
-          // Already in list — just update title/messages in state
-          return prev.map((c) =>
-            c.id === activeConvId ? { ...c, title, messages, updatedAt: Date.now() } : c,
-          );
+        const existingIndex = prev.findIndex((conversation) => conversation.id === activeConvId);
+        if (existingIndex >= 0) {
+          const existing = prev[existingIndex];
+          const currentSignature = existing.messages
+            .map((message) => `${message.id}:${message.role}:${getMessageText(message)}`)
+            .join('|');
+          const sameTitle = existing.title === title;
+          const sameMessages = currentSignature === nextSignature;
+
+          if (sameTitle && sameMessages) {
+            return prev;
+          }
+
+          const next = [...prev];
+          next[existingIndex] = {
+            ...existing,
+            title,
+            messages,
+            updatedAt: sameMessages ? existing.updatedAt : Date.now(),
+          };
+          return next;
         }
+
         const newConv: StoredConversation = {
           id: activeConvId,
           title,
@@ -325,12 +435,6 @@ export default function AIAssistantPage() {
           updatedAt: Date.now(),
           messages,
         };
-        // Create on server
-        fetch('/api/ai/conversations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title }),
-        }).catch(() => {});
         return [newConv, ...prev];
       });
 
@@ -347,6 +451,7 @@ export default function AIAssistantPage() {
                 id: m.id,
                 role: m.role,
                 content: getMessageText(m),
+                parts: (m as unknown as { parts?: unknown[] }).parts ?? [],
                 createdAt: Date.now(),
               })),
             }),
@@ -364,40 +469,53 @@ export default function AIAssistantPage() {
     }
   }, [messages]);
 
-  function handleNewChat() {
-    const id = crypto.randomUUID();
-    setActiveConvId(id);
-    setMessages([]);
-    // Don't add to the conversations list yet — the conversation
-    // will appear in the sidebar once the user sends the first message.
-  }
+  const handleNewChat = useCallback(async () => {
+    await createConversationOnServer('New Chat');
+  }, [createConversationOnServer]);
 
-  function handleSelectConversation(id: string) {
+  async function handleSelectConversation(id: string) {
     setActiveConvId(id);
     const conv = conversations.find((c) => c.id === id);
-    setMessages(conv?.messages ?? []);
+    if (conv?.messages?.length) {
+      setMessages(conv.messages);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/ai/conversations/${id}`);
+      if (!response.ok) return;
+      const payload = await response.json() as { data: StoredConversation };
+      const loaded = payload.data;
+      const restored = restoreMessages(loaded.messages ?? []);
+      setConversations((prev) => prev.map((conversation) => (
+        conversation.id === id
+          ? { ...conversation, messages: restored }
+          : conversation
+      )));
+      setMessages(restored);
+    } catch {
+      setMessages([]);
+    }
   }
 
   function handleDeleteConversation(id: string) {
-    deleteStoredConversation(id);
     const updated = conversations.filter((c) => c.id !== id);
     setConversations(updated);
-    persistConversations(updated);
     if (activeConvId === id) {
       if (updated.length > 0) {
         setActiveConvId(updated[0].id);
         setMessages(updated[0].messages);
       } else {
-        // No conversations left — reset to a fresh empty state
-        const freshId = crypto.randomUUID();
-        setActiveConvId(freshId);
-        setMessages([]);
+        void createConversationOnServer('New Chat');
       }
     }
     fetch(`/api/ai/conversations/${id}`, { method: 'DELETE' }).catch(() => {});
   }
 
-  const handleAccept = useCallback(() => {
+  const handleAccept = useCallback((esignUrl?: string | null) => {
+    if (esignUrl && typeof window !== 'undefined') {
+      window.open(esignUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
     sendMessage({ text: '[ACTION:ACCEPT_PROPOSAL]' });
   }, [sendMessage]);
 
@@ -405,8 +523,22 @@ export default function AIAssistantPage() {
     sendMessage({ text: '[ACTION:REJECT_PROPOSAL]' });
   }, [sendMessage]);
 
-  const handleNegotiate = useCallback(() => {
-    sendMessage({ text: '[ACTION:NEGOTIATE]' });
+  const handleNegotiate = useCallback((draft: ProposalDraft) => {
+    const payload = {
+      proposal_uuid: draft.proposalUuid ?? '',
+      title: draft.title,
+      description: draft.description,
+      currency: draft.currency,
+      recipient_name: draft.recipient.name,
+      recipient_email: draft.recipient.email,
+      recipient_company: draft.recipient.company,
+      company_id: draft.company_id,
+      language: draft.language,
+      current_negotiation_round: draft.negotiation_round ?? 0,
+      notes: draft.notes,
+      venue_type: draft.venue_type ?? undefined,
+    };
+    sendMessage({ text: `[ACTION:NEGOTIATE] ${JSON.stringify(payload)}` });
   }, [sendMessage]);
 
   const handleFormSubmit = useCallback((formData: EventFormData) => {
@@ -446,19 +578,39 @@ export default function AIAssistantPage() {
     if (!SpeechRecognition) return;
     const recognition = new SpeechRecognition();
     recognition.lang = language === 'en' ? 'en-US' : language;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
+    recognition.continuous = false;
     recognition.maxAlternatives = 1;
+    let finalTranscript = '';
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setInput(transcript);
-      setIsListening(false);
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0]?.transcript ?? '';
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      setInput(`${finalTranscript} ${interimTranscript}`.trim());
     };
     recognition.onerror = () => setIsListening(false);
-    recognition.onend = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      const transcript = finalTranscript.trim();
+      if (transcript) {
+        sendMessage({ text: transcript });
+        setInput('');
+      }
+    };
     recognitionRef.current = recognition;
     recognition.start();
     setIsListening(true);
-  }, [isListening, language]);
+  }, [isListening, language, sendMessage]);
+
+  useEffect(() => () => {
+    recognitionRef.current?.stop?.();
+  }, []);
 
   const hasVoiceSupport = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
@@ -561,50 +713,15 @@ export default function AIAssistantPage() {
             </svg>
           </div>
           <div className="flex-1">
-            <h2 className="text-base font-semibold text-gray-900">{isSales ? 'AI Sales Assistant' : 'Hotel Concierge'}</h2>
+            <h2 className="text-base font-semibold text-gray-900">{isSales ? 'AI Sales Assistant' : '🏨 Your Hotel Buddy'}</h2>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
-              <p className="text-xs text-gray-500">{isSales ? 'Create proposals, negotiate, analyze pipeline' : 'Book events, check prices, explore facilities'}</p>
+              <p className="text-xs text-gray-500">{isSales ? 'Create proposals, analyze pipeline, manage proposals' : 'Events, rooms, prices & good vibes — ask me anything!'}</p>
             </div>
           </div>
           {/* Mode toggle — guest only */}
           {!isSales && (
             <div className="ml-auto flex items-center gap-2">
-              {/* Language Picker */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowLangPicker(!showLangPicker)}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-all hover:bg-gray-100"
-                >
-                  <span>{LANGUAGES.find((l) => l.code === language)?.flag}</span>
-                  <span className="hidden sm:inline">{LANGUAGES.find((l) => l.code === language)?.label}</span>
-                  <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                  </svg>
-                </button>
-                {showLangPicker && (
-                  <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                    {LANGUAGES.map((l) => (
-                      <button
-                        key={l.code}
-                        onClick={() => { setLanguage(l.code); setShowLangPicker(false); }}
-                        className={cn(
-                          'flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors',
-                          language === l.code ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50',
-                        )}
-                      >
-                        <span>{l.flag}</span>
-                        <span>{l.label}</span>
-                        {language === l.code && (
-                          <svg className="ml-auto h-4 w-4 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
               <div className="flex items-center rounded-xl border border-gray-200 bg-gray-50 p-0.5">
               <button
                 onClick={() => setChatMode('conversation')}
@@ -637,43 +754,6 @@ export default function AIAssistantPage() {
               </div>
             </div>
           )}
-          {/* Language picker for sales */}
-          {isSales && (
-            <div className="relative ml-auto">
-              <button
-                onClick={() => setShowLangPicker(!showLangPicker)}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-all hover:bg-gray-100"
-              >
-                <span>{LANGUAGES.find((l) => l.code === language)?.flag}</span>
-                <span className="hidden sm:inline">{LANGUAGES.find((l) => l.code === language)?.label}</span>
-                <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                </svg>
-              </button>
-              {showLangPicker && (
-                <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                  {LANGUAGES.map((l) => (
-                    <button
-                      key={l.code}
-                      onClick={() => { setLanguage(l.code); setShowLangPicker(false); }}
-                      className={cn(
-                        'flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors',
-                        language === l.code ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50',
-                      )}
-                    >
-                      <span>{l.flag}</span>
-                      <span>{l.label}</span>
-                      {language === l.code && (
-                        <svg className="ml-auto h-4 w-4 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                        </svg>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Messages or Form */}
@@ -682,11 +762,11 @@ export default function AIAssistantPage() {
         ) : (
           <>
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
-              {messages.length === 0 && (
+              {visibleMessages.length === 0 && !isBootstrappingConversations && (
                 <EmptyState suggestions={suggestions} onSelect={setInput} isSales={isSales} />
               )}
 
-              {messages.map((message, idx) => (
+              {visibleMessages.map((message, idx) => (
                 <div key={message.id} className="chat-msg-enter" style={{ animationDelay: `${Math.min(idx * 30, 200)}ms` }}>
                   <ChatMessage
                     message={message}
@@ -713,7 +793,7 @@ export default function AIAssistantPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={isSales ? 'Ask anything — create proposals, visualize data, analyze pipeline...' : 'Ask about rooms, facilities, prices, or book an event...'}
+                  placeholder={isSales ? 'Ask anything — create proposals, visualize data, analyze pipeline...' : 'Ask me about rooms, parties, food, or anything hotel-related! 🌟'}
                   className="flex-1 h-12 bg-transparent text-sm placeholder:text-gray-400 focus:outline-none"
                   disabled={isLoading}
                 />
@@ -753,7 +833,7 @@ export default function AIAssistantPage() {
                 </button>
               </form>
               <p className="mt-2 text-center text-[0.65rem] text-gray-400">
-                AI can make mistakes. Review proposals before sending.
+                AI can make mistakes. Always double-check proposals before sending — even robots need a proofreader! 🤖
               </p>
             </div>
           </>
@@ -820,10 +900,24 @@ const SETUP_OPTIONS = [
 interface ContentItem {
   id: number;
   variation_id: number;
-  title: string;
+  title: string | Record<string, unknown>;
   description?: string;
   unit_value_with_tax?: number;
   product_id?: number;
+}
+
+function toDisplayText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!value || typeof value !== 'object') return '';
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.en === 'string') return record.en;
+
+  for (const candidate of Object.values(record)) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return '';
 }
 
 interface CalendarDay {
@@ -1060,15 +1154,15 @@ function EventBookingForm({
                   className="rounded-xl border border-gray-200 bg-white p-3 hover:border-gray-300 hover:bg-gray-50 transition-all"
                 >
                   <div className="flex justify-between items-start">
-                    <p className="text-sm font-medium text-gray-800 line-clamp-1">{item.title}</p>
+                    <p className="text-sm font-medium text-gray-800 line-clamp-1">{toDisplayText(item.title)}</p>
                     {item.unit_value_with_tax != null && item.unit_value_with_tax > 0 && (
                       <span className="text-xs font-semibold text-gray-700 whitespace-nowrap ml-2">
                         €{(item.unit_value_with_tax / 100).toLocaleString('en-IE', { minimumFractionDigits: 0 })}
                       </span>
                     )}
                   </div>
-                  {item.description && (
-                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{item.description}</p>
+                  {toDisplayText(item.description) && (
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{toDisplayText(item.description)}</p>
                   )}
                 </div>
               ))}
@@ -1409,11 +1503,11 @@ function EmptyState({
           </svg>
         </div>
       </div>
-      <h3 className="text-xl font-bold text-gray-900 mb-1">How can I help?</h3>
+      <h3 className="text-xl font-bold text-gray-900 mb-1">{isSales ? 'How can I help?' : 'Hey there! 👋 Welcome!'}</h3>
       <p className="text-sm text-gray-500 max-w-md mb-8">
         {isSales
-          ? 'I can create proposals, negotiate pricing, visualize your data with charts, and manage the full proposal lifecycle.'
-          : 'I can help you explore our hotel facilities, check room and event prices, book venues, and manage your event proposals.'}
+          ? 'I can create proposals, analyze pricing, visualize your data with charts, and manage the full proposal lifecycle.'
+          : "I'm your friendly hotel concierge — think of me as the person who knows all the best rooms, the tastiest menus, and the secret to a perfect event. Let's make something amazing! ✨"}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl w-full">
         {suggestions.map((s, i) => (
@@ -1484,7 +1578,7 @@ function InputCard({
               >
                 <option value="">{field.placeholder || `Select ${field.label.toLowerCase()}`}</option>
                 {(field.options ?? []).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{toDisplayText(option.label)}</option>
                 ))}
               </select>
             )}
@@ -1541,7 +1635,7 @@ function InputCard({
                       )}
                     >
                       {option.icon && <span>{option.icon}</span>}
-                      <span className="font-medium">{option.label}</span>
+                      <span className="font-medium">{toDisplayText(option.label)}</span>
                     </button>
                   );
                 })}
@@ -1572,28 +1666,44 @@ function ChatMessage({
   isLoading,
 }: {
   message: UIMessage;
-  onAccept: () => void;
+  onAccept: (esignUrl?: string | null) => void;
   onReject: () => void;
-  onNegotiate: () => void;
+  onNegotiate: (draft: ProposalDraft) => void;
   onSendStructuredInput: (textPayload: string) => void;
   isLoading: boolean;
 }) {
-  const text = getMessageText(message);
+  const rawText = getMessageText(message);
+  const { content: text, quickReplies } = extractQuickReplies(rawText);
 
   // Extract tool parts — handle both flat DynamicToolUIPart and nested ToolInvocation formats
   const toolParts: ToolPart[] = [];
-  for (const p of message.parts) {
-    if (p.type === 'dynamic-tool') {
+  const messageParts = Array.isArray((message as { parts?: unknown }).parts)
+    ? ((message as { parts: unknown[] }).parts)
+    : [];
+
+  for (const p of messageParts) {
+    if (!p || typeof p !== 'object') continue;
+    const part = p as {
+      type?: unknown;
+      toolInvocation?: unknown;
+      toolName?: unknown;
+      toolCallId?: unknown;
+      state?: unknown;
+      output?: unknown;
+      input?: unknown;
+    };
+
+    if (part.type === 'dynamic-tool') {
       // Flat structure: { type, toolName, toolCallId, state, output }
-      toolParts.push(p as unknown as ToolPart);
-    } else if (p.type.startsWith('tool-')) {
+      toolParts.push(part as unknown as ToolPart);
+    } else if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
       // Named tool: { type: 'tool-<name>', toolCallId, state, output }
-      toolParts.push(p as unknown as ToolPart);
-    } else if (p.type === 'tool-invocation' && 'toolInvocation' in p) {
+      toolParts.push(part as unknown as ToolPart);
+    } else if (part.type === 'tool-invocation' && 'toolInvocation' in part) {
       // Nested structure: { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, state, result } }
-      const inv = (p as any).toolInvocation;
+      const inv = (part as any).toolInvocation;
       toolParts.push({
-        type: p.type,
+        type: String(part.type),
         toolName: inv.toolName ?? '',
         toolCallId: inv.toolCallId ?? '',
         state: inv.state === 'result' ? 'output-available' : inv.state,
@@ -1610,7 +1720,9 @@ function ChatMessage({
         ? 'Accepted the proposal'
         : text === '[ACTION:REJECT_PROPOSAL]'
           ? 'Rejected the proposal'
-          : 'Requested negotiation';
+          : text.startsWith('[ACTION:NEGOTIATE]')
+            ? 'Requested negotiation'
+            : 'Requested negotiation';
     return (
       <div className="flex justify-end">
         <div className="rounded-full bg-gray-100 px-4 py-2 text-xs font-medium text-gray-500">
@@ -1623,13 +1735,14 @@ function ChatMessage({
   // Extract proposal drafts, charts, booking confirmations, and rich tool results
   const proposalDrafts: ProposalDraft[] = [];
   const charts: ChartConfig[] = [];
-  const bookingConfirmations: { url: string; title: string; emailSent?: boolean }[] = [];
+  const bookingConfirmations: { url: string; title: string; emailSent?: boolean; readyForSignature?: boolean }[] = [];
   const availabilityResults: AvailabilityResult[] = [];
   const searchResults: SearchResultSet[] = [];
   const pricingResults: PricingResult[] = [];
   const calendarResults: CalendarResult[] = [];
   const floorPlanResults: FloorPlanResult[] = [];
   const inputRequests: UserInputRequest[] = [];
+  const imageResults: ImageResult[] = [];
   for (const part of toolParts) {
     if (part.state === 'output-available' && part.output && typeof part.output === 'object') {
       const result = part.output as Record<string, unknown>;
@@ -1637,11 +1750,16 @@ function ChatMessage({
         proposalDrafts.push(result as unknown as ProposalDraft);
       } else if (result.type === 'chart') {
         charts.push(result as unknown as ChartConfig);
-      } else if (result.type === 'booking_confirmed' && result.esign && typeof result.esign === 'object') {
+      } else if ((result.type === 'booking_confirmed' || result.type === 'esign_redirect') && result.esign && typeof result.esign === 'object') {
         const esign = result.esign as { url?: string };
         const booking = result.booking as { title?: string } | undefined;
         if (esign.url) {
-          bookingConfirmations.push({ url: esign.url, title: booking?.title || 'Your Proposal', emailSent: !!result.emailSent });
+          bookingConfirmations.push({
+            url: esign.url,
+            title: booking?.title || 'Your Proposal',
+            emailSent: !!result.emailSent,
+            readyForSignature: result.type === 'esign_redirect',
+          });
         }
       } else if (result.type === 'availability' && Array.isArray(result.options)) {
         availabilityResults.push(result as unknown as AvailabilityResult);
@@ -1653,6 +1771,8 @@ function ChatMessage({
         floorPlanResults.push(result as unknown as FloorPlanResult);
       } else if (result.type === 'user_input_request' && Array.isArray(result.fields)) {
         inputRequests.push(result as unknown as UserInputRequest);
+      } else if (result.type === 'image_result' && result.success) {
+        imageResults.push(result as unknown as ImageResult);
       }
       // Search results from searchProposals tool
       if (part.toolName === 'searchProposals' && Array.isArray(result.results)) {
@@ -1686,7 +1806,6 @@ function ChatMessage({
             draft={draft}
             onAccept={onAccept}
             onReject={onReject}
-            onNegotiate={onNegotiate}
             isLoading={isLoading}
           />
         ))}
@@ -1718,12 +1837,23 @@ function ChatMessage({
 
         {/* Availability Calendar Cards */}
         {calendarResults.map((cal, i) => (
-          <AvailabilityCalendarCard key={`cal-${i}`} data={cal} />
+          <AvailabilityCalendarCard
+            key={`cal-${i}`}
+            data={cal}
+            onSelectDate={(date) => {
+              onSendStructuredInput(`Please check venue options for ${date}.`);
+            }}
+          />
         ))}
 
         {/* Floor Plan Cards */}
         {floorPlanResults.map((fp, i) => (
           <FloorPlanCard key={`fp-${i}`} data={fp} />
+        ))}
+
+        {/* AI Generated Images */}
+        {imageResults.map((img, i) => (
+          <ImageCard key={`img-${i}`} data={img} />
         ))}
 
         {/* Structured Input Cards */}
@@ -1758,7 +1888,9 @@ function ChatMessage({
                 </svg>
               </div>
               <div className="flex-1">
-                <h4 className="text-sm font-semibold text-green-800">Proposal Created</h4>
+                <h4 className="text-sm font-semibold text-green-800">
+                  {conf.readyForSignature ? 'Review & Sign Proposal' : 'Proposal Accepted'}
+                </h4>
                 <p className="text-xs text-green-600 mt-0.5">{conf.title}</p>
               </div>
             </div>
@@ -1817,6 +1949,22 @@ function ChatMessage({
           </div>
         )}
 
+        {message.role === 'assistant' && quickReplies.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {quickReplies.map((reply, index) => (
+              <button
+                key={`${reply.label}-${index}`}
+                type="button"
+                onClick={() => onSendStructuredInput(reply.message)}
+                disabled={isLoading}
+                className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {reply.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Tool invocation indicators — show clean thinking/generating state */}
         {(() => {
           const pendingTools = toolParts.filter(
@@ -1825,7 +1973,8 @@ function ChatMessage({
                 typeof t.output === 'object' &&
                 (((t.output as Record<string, unknown>).type === 'proposal_draft') ||
                  ((t.output as Record<string, unknown>).type === 'chart') ||
-                 ((t.output as Record<string, unknown>).type === 'booking_confirmed'))),
+                 ((t.output as Record<string, unknown>).type === 'booking_confirmed') ||
+                 ((t.output as Record<string, unknown>).type === 'image_result'))),
           );
           if (pendingTools.length === 0) return null;
 
@@ -1870,13 +2019,11 @@ function ProposalCard({
   draft,
   onAccept,
   onReject,
-  onNegotiate,
   isLoading,
 }: {
   draft: ProposalDraft;
-  onAccept: () => void;
+  onAccept: (esignUrl?: string | null) => void;
   onReject: () => void;
-  onNegotiate: () => void;
   isLoading: boolean;
 }) {
   const [actionTaken, setActionTaken] = useState<'accepted' | 'rejected' | null>(null);
@@ -1889,22 +2036,26 @@ function ProposalCard({
     }).format(n);
 
   const venueImage = getVenueImage(draft.venue_type);
+  const headerUrl = draft.header_image || venueImage?.url;
+  const headerLabel = venueImage?.label || (draft.header_image ? 'Content Preview' : null);
 
   return (
     <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-      {/* Venue Image */}
-      {venueImage && (
+      {/* Header Image — content image preferred, venue fallback */}
+      {headerUrl && (
         <div className="relative h-36 w-full overflow-hidden">
           <div
             className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${venueImage.url})` }}
+            style={{ backgroundImage: `url(${headerUrl})` }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-          <div className="absolute bottom-3 left-4 flex items-center gap-2">
-            <span className="rounded-full bg-white/20 backdrop-blur-sm px-2.5 py-0.5 text-xs font-medium text-white">
-              {venueImage.label}
-            </span>
-          </div>
+          {headerLabel && (
+            <div className="absolute bottom-3 left-4 flex items-center gap-2">
+              <span className="rounded-full bg-white/20 backdrop-blur-sm px-2.5 py-0.5 text-xs font-medium text-white">
+                {headerLabel}
+              </span>
+            </div>
+          )}
         </div>
       )}
       {/* Header */}
@@ -1927,7 +2078,7 @@ function ProposalCard({
         </div>
         {draft.is_final_offer && (
           <div className="mt-2 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90">
-            This is our best and final offer
+            🌟 This is our best and final offer
           </div>
         )}
       </div>
@@ -1985,7 +2136,7 @@ function ProposalCard({
         </div>
         {draft.negotiation_round > 0 && (
           <p className="text-xs text-green-600 font-medium">
-            Round {draft.negotiation_round} of {draft.max_negotiation_rounds} — {draft.discount_applied}% discount applied
+            ✨ Special offer — {draft.discount_applied}% discount applied
           </p>
         )}
       </div>
@@ -2011,43 +2162,30 @@ function ProposalCard({
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-            {draft.negotiation_round < draft.max_negotiation_rounds ? 'Rejected' : 'Declined'}
+            {draft.is_final_offer ? 'Declined' : 'Rejected'}
           </div>
         ) : (
           <>
             <button
-              onClick={() => { setActionTaken('accepted'); onAccept(); }}
+              onClick={() => { setActionTaken('accepted'); onAccept(draft.proposalUrl ?? null); }}
               disabled={buttonsDisabled}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
-              Accept
+              Accept &amp; Generate Proposal
             </button>
-            {draft.negotiation_round < draft.max_negotiation_rounds ? (
-              <button
-                onClick={() => { setActionTaken('rejected'); onReject(); }}
-                disabled={buttonsDisabled}
-                className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Reject
-              </button>
-            ) : (
-              <button
-                onClick={() => { setActionTaken('rejected'); onReject(); }}
-                disabled={buttonsDisabled}
-                className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Decline
-              </button>
-            )}
+            <button
+              onClick={() => { setActionTaken('rejected'); onReject(); }}
+              disabled={buttonsDisabled}
+              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Reject
+            </button>
           </>
         )}
       </div>
@@ -2077,11 +2215,11 @@ function TypingIndicator() {
 // ─── Rich Tool Result Cards ───
 
 const SPACE_IMAGES: Record<string, string> = {
-  'Grand Ballroom': 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?w=600&h=300&fit=crop&q=80',
-  'Executive Boardroom': 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=600&h=300&fit=crop&q=80',
-  'Rooftop Garden': 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=600&h=300&fit=crop&q=80',
-  'Conference Hall A': 'https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=600&h=300&fit=crop&q=80',
-  'The Grand Restaurant': 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&h=300&fit=crop&q=80',
+  'Grand Ballroom': '/images/Banquet Grand.webp',
+  'Executive Boardroom': '/images/Boardroom Grand.jpg',
+  'Rooftop Garden': '/images/decoration.jpeg',
+  'Conference Hall A': '/images/microphone and speakers.webp',
+  'The Grand Restaurant': '/images/Dinner.jpg',
 };
 
 function AvailabilityCard({ data }: { data: AvailabilityResult }) {
@@ -2264,7 +2402,7 @@ function SearchResultsCard({ data }: { data: SearchResultSet }) {
 
 const DOW_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
-function AvailabilityCalendarCard({ data }: { data: CalendarResult }) {
+function AvailabilityCalendarCard({ data, onSelectDate }: { data: CalendarResult; onSelectDate?: (date: string) => void }) {
   const firstDow = data.days[0]?.dow ?? 0;
   const blanks = Array.from({ length: firstDow }, (_, i) => i);
 
@@ -2304,20 +2442,55 @@ function AvailabilityCalendarCard({ data }: { data: CalendarResult }) {
               const bg = day.status === 'available' ? 'bg-green-100 text-green-800 hover:bg-green-200'
                 : day.status === 'limited' ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
                 : 'bg-red-100 text-red-400';
+              const isSelectable = !!onSelectDate && day.status !== 'booked';
               return (
                 <div
                   key={day.date}
                   className={cn(
-                    'cal-day-enter flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors cursor-default',
+                    'cal-day-enter flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors',
                     bg,
+                    isSelectable ? 'cursor-pointer ring-1 ring-transparent hover:ring-gray-300' : 'cursor-default',
                   )}
                   style={{ animationDelay: `${i * 15}ms` }}
                   title={`${day.date}: ${day.slots_available}/${day.slots_total} slots available`}
+                  onClick={() => {
+                    if (isSelectable && onSelectDate) onSelectDate(day.date);
+                  }}
                 >
                   {day.day}
                 </div>
               );
             })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AI Image Card ───
+
+function ImageCard({ data }: { data: ImageResult }) {
+  if (!data.success || !data.image) return null;
+  const src = `data:${data.image.mimeType};base64,${data.image.base64}`;
+  return (
+    <div className="w-full max-w-lg venue-card-enter">
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="relative">
+          <img
+            src={src}
+            alt={data.image.label}
+            className="w-full object-cover"
+            style={{ maxHeight: '24rem' }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none" />
+          <div className="absolute bottom-3 left-4 flex items-center gap-2">
+            <span className="rounded-full bg-white/20 backdrop-blur-sm px-3 py-1 text-xs font-medium text-white">
+              {data.image.label}
+            </span>
+            <span className="rounded-full bg-white/20 backdrop-blur-sm px-2 py-0.5 text-[10px] text-white/80">
+              AI Generated
+            </span>
           </div>
         </div>
       </div>
@@ -2558,7 +2731,7 @@ function ProposalComparisonCard({ drafts }: { drafts: ProposalDraft[] }) {
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-400 uppercase">Item</th>
                 {drafts.map((d, i) => (
                   <th key={i} className="px-4 py-2.5 text-right text-xs font-medium text-gray-400 uppercase">
-                    Round {d.negotiation_round || i + 1}
+                    {i === 0 ? 'Original' : `Offer ${i}`}
                     {d.discount_applied > 0 && (
                       <span className="ml-1 text-green-600">-{d.discount_applied}%</span>
                     )}
@@ -2623,32 +2796,32 @@ function formatRelativeTime(timestamp: number): string {
 
 const VENUE_IMAGES: Record<string, { url: string; label: string }> = {
   room: {
-    url: 'https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800&h=400&fit=crop&q=80',
+    url: '/images/Double Room.jpg',
     label: 'Hotel Room / Suite',
   },
   boardroom: {
-    url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&h=400&fit=crop&q=80',
+    url: '/images/Boardroom Grand.jpg',
     label: 'Boardroom',
   },
   banquet: {
-    url: 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?w=800&h=400&fit=crop&q=80',
+    url: '/images/Banquet Grand.webp',
     label: 'Banquet Hall',
   },
   conference: {
-    url: 'https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=800&h=400&fit=crop&q=80',
+    url: '/images/microphone and speakers.webp',
     label: 'Conference Room',
   },
   garden: {
-    url: 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=800&h=400&fit=crop&q=80',
+    url: '/images/decoration.jpeg',
     label: 'Garden / Outdoor',
   },
   restaurant: {
-    url: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&h=400&fit=crop&q=80',
+    url: '/images/Dinner.jpg',
     label: 'Restaurant / Dining',
   },
-  pool: {
-    url: 'https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=800&h=400&fit=crop&q=80',
-    label: 'Poolside',
+  suite: {
+    url: '/images/Suite Room.webp',
+    label: 'Suite Room',
   },
 };
 
@@ -2658,10 +2831,66 @@ function getVenueImage(venueType?: string | null): { url: string; label: string 
 }
 
 function getMessageText(message: UIMessage): string {
-  return message.parts
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+  const parts = Array.isArray((message as { parts?: unknown }).parts)
+    ? ((message as { parts: unknown[] }).parts)
+    : [];
+
+  const textFromParts = parts
+    .filter((p): p is { type: 'text'; text: string } => {
+      if (!p || typeof p !== 'object') return false;
+      const candidate = p as { type?: unknown; text?: unknown };
+      return candidate.type === 'text' && typeof candidate.text === 'string';
+    })
     .map((p) => p.text)
     .join('');
+
+  if (textFromParts) return textFromParts;
+
+  const content = (message as { content?: unknown }).content;
+  return typeof content === 'string' ? content : '';
+}
+
+function isRenderableMessage(message: UIMessage): boolean {
+  const text = getMessageText(message).trim();
+  if (text) return true;
+
+  const parts = Array.isArray((message as { parts?: unknown }).parts)
+    ? ((message as { parts: unknown[] }).parts)
+    : [];
+
+  return parts.some((part) => {
+    if (!part || typeof part !== 'object') return false;
+    const candidate = part as { type?: unknown; toolInvocation?: unknown };
+    if (candidate.type === 'dynamic-tool') return true;
+    if (typeof candidate.type === 'string' && candidate.type.startsWith('tool-')) return true;
+    if (candidate.type === 'tool-invocation' && candidate.toolInvocation) return true;
+    return false;
+  });
+}
+
+function extractQuickReplies(text: string): { content: string; quickReplies: { label: string; message: string }[] } {
+  const match = text.match(/\[QUICK_REPLIES\]([\s\S]*?)\[\/QUICK_REPLIES\]/);
+  if (!match) {
+    return { content: text, quickReplies: [] };
+  }
+
+  const quickReplies = match[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^[-*]\s*/, ''))
+    .map((line) => {
+      const parts = line.split('::').map((part) => part.trim());
+      if (parts.length >= 2) {
+        return { label: parts[0], message: parts.slice(1).join('::') };
+      }
+      return { label: line, message: line };
+    })
+    .filter((reply) => reply.label && reply.message)
+    .slice(0, 4);
+
+  const content = text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
+  return { content, quickReplies };
 }
 
 function generateTitle(messages: UIMessage[]): string {
@@ -2701,6 +2930,7 @@ function getThinkingLabel(toolName: string): string {
     bookSpace: 'Reserving venue...',
     getMonthAvailability: 'Loading availability calendar...',
     suggestFloorPlan: 'Designing floor plan...',
+    generateImage: 'Generating image...',
   };
   return labels[toolName] || 'Thinking...';
 }

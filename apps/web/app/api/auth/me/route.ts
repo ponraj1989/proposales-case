@@ -8,6 +8,7 @@ import { User } from '@/lib/models';
 const SESSION_COOKIE = 'proposales_session';
 const ROLE_COOKIE = 'proposales_role';
 const USER_ID_COOKIE = 'proposales_uid';
+const STABLE_UID_COOKIE = 'proposales_stable_uid';
 
 function getSalesEmails(): string[] {
   const raw = process.env.SALES_EMAILS ?? '';
@@ -22,10 +23,12 @@ export async function GET() {
   if (apiKeySession) {
     const role = cookieStore.get(ROLE_COOKIE)?.value || 'customer';
     const userId = cookieStore.get(USER_ID_COOKIE)?.value || null;
+    const stableUid = cookieStore.get(STABLE_UID_COOKIE)?.value || null;
     return NextResponse.json({
       authenticated: true,
       role,
       userId,
+      stableUid,
       name: null,
       email: null,
       image: null,
@@ -63,6 +66,7 @@ export async function GET() {
     authenticated: true,
     role,
     userId,
+    stableUid: `google:${email}`,
     name: session.user.name || null,
     email: session.user.email || null,
     image: session.user.image || null,

@@ -5,7 +5,7 @@ import type {
   SingleResponse,
   PaginatedResponse,
 } from '../types';
-import type { CreateProposalInput, PatchProposalDataInput } from '../validation';
+import type { CreateProposalInput, PatchProposalDataInput, UpdateProposalInput } from '../validation';
 
 export function proposalsEndpoints(client: ApiClient) {
   return {
@@ -17,6 +17,12 @@ export function proposalsEndpoints(client: ApiClient) {
 
     get: (uuid: string) =>
       client.get<SingleResponse<Proposal>>(`/v3/proposals/${encodeURIComponent(uuid)}`),
+
+    update: (uuid: string, input: UpdateProposalInput) =>
+      client.put<SingleResponse<Proposal>>(
+        `/v3/proposals/${encodeURIComponent(uuid)}`,
+        input,
+      ),
 
     patchData: (uuid: string, input: PatchProposalDataInput) =>
       client.patch<SingleResponse<Record<string, unknown>>>(

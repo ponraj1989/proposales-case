@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@proposales/ui';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { signOut } from 'next-auth/react';
 import { useUser, useActivityFeed, type ActivityFeedEvent } from '@/lib/hooks';
 
@@ -78,6 +78,15 @@ const salesNavigation = [
     ),
   },
   {
+    name: 'PMS',
+    href: '/dashboard/pms',
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 21v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21m0 0h4.5V3.545M12.75 21h7.5V10.75M2.25 21h1.5m18 0h-18M2.25 9l4.5-1.636M18.75 3l-1.5.545m0 6.205l3 1m1.5.5l-1.5-.5M6.75 7.364V3h-3v18m3-13.636l10.5-3.819" />
+      </svg>
+    ),
+  },
+  {
     name: 'AI Assistant',
     href: '/dashboard/ai',
     icon: (
@@ -115,7 +124,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const { data: user, isLoading: userLoading } = useUser();
-  const { data: activityData } = useActivityFeed((user?.role ?? null) === 'sales');
+  const { data: activityData, mutate: mutateActivity } = useActivityFeed((user?.role ?? null) === 'sales');
 
   const role = user?.role ?? null;
   const activityEvents = activityData?.data ?? [];
@@ -125,6 +134,65 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const userName = user?.name ?? null;
   const userEmail = user?.email ?? null;
   const userImage = user?.image ?? null;
+  const mutateActivityRef = useRef(mutateActivity);
+
+  useEffect(() => {
+    mutateActivityRef.current = mutateActivity;
+  }, [mutateActivity]);
+
+  useEffect(() => {
+    if (role !== 'sales') return;
+
+    let stream: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+
+      stream = new EventSource('/api/activity-feed/stream');
+
+      stream.addEventListener('activity', (event) => {
+        const message = event as MessageEvent<string>;
+        let incoming: ActivityFeedEvent | null = null;
+        try {
+          incoming = JSON.parse(message.data) as ActivityFeedEvent;
+        } catch {
+          return;
+        }
+        if (!incoming) return;
+        const parsed = incoming;
+
+        void mutateActivityRef.current(
+          (previous) => {
+            const existing = previous?.data ?? [];
+            const next = [parsed, ...existing.filter((entry) => entry.id !== parsed.id)].slice(0, 50);
+            return { data: next };
+          },
+          { revalidate: false },
+        );
+      });
+
+      stream.onerror = () => {
+        stream?.close();
+        stream = null;
+
+        if (!cancelled) {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      stream?.close();
+    };
+  }, [role]);
 
   // Show loading skeleton until role is determined
   if (userLoading || !role) {
@@ -302,6 +370,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
                 {activityEvents.map((evt, i) => {
                   const meta = EVENT_ICONS[evt.type];
+                  const fmtAmount = evt.amount
+                    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: evt.currency || 'USD' }).format(evt.amount)
+                    : null;
                   return (
                     <div
                       key={evt.id}
@@ -312,8 +383,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         {meta.icon}
                       </span>
                       <div className="min-w-0 flex-1">
+                        {evt.proposalTitle && (
+                          <p className="text-xs font-semibold text-gray-900 truncate">{evt.proposalTitle}</p>
+                        )}
                         <p className="text-sm text-gray-700 leading-snug">{evt.description}</p>
-                        <p className="mt-0.5 text-[0.65rem] text-gray-400">{timeAgo(evt.time)}</p>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <span className="text-[0.65rem] text-gray-400">{timeAgo(evt.time)}</span>
+                          {fmtAmount && (
+                            <span className="text-[0.65rem] font-medium text-gray-500">{fmtAmount}</span>
+                          )}
+                          {evt.proposalUuid && (
+                            <Link
+                              href={`/dashboard/proposals/${evt.proposalUuid}`}
+                              className="text-[0.65rem] font-medium text-blue-500 hover:text-blue-700"
+                              onClick={() => setActivityOpen(false)}
+                            >
+                              View
+                            </Link>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

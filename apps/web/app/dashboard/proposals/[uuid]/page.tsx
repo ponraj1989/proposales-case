@@ -13,14 +13,19 @@ import {
   CardHeader,
   CardTitle,
   CardContent,
-  Modal,
-  ModalHeader,
-  ModalTitle,
-  ModalFooter,
   formatCurrency,
   formatDate,
 } from '@proposales/ui';
-import { useProposal, apiPut } from '@/lib/hooks';
+import { useProposal, apiPut, useContent } from '@/lib/hooks';
+
+interface EditBlock {
+  uuid: string;
+  content_id?: number;
+  title: string;
+  type: string;
+  quantity: number;
+  removed: boolean;
+}
 
 export default function ProposalDetailPage() {
   const { uuid } = useParams<{ uuid: string }>();
@@ -28,10 +33,13 @@ export default function ProposalDetailPage() {
   const { data, error, isLoading, mutate } = useProposal(uuid);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [generatingDesc, setGeneratingDesc] = useState(false);
 
   const proposal = data?.data as Record<string, unknown> | undefined;
+
+  const { data: contentData } = useContent();
+  const contentItems: { variation_id: number; title: Record<string, string> }[] = contentData?.data ?? [];
 
   const [formData, setFormData] = useState({
     title_md: '',
@@ -41,6 +49,8 @@ export default function ProposalDetailPage() {
     contact_phone: '',
     recipient_company_name: '',
   });
+  const [editBlocks, setEditBlocks] = useState<EditBlock[]>([]);
+  const [addBlockId, setAddBlockId] = useState<string>('');
 
   function startEdit() {
     if (proposal) {
@@ -52,30 +62,61 @@ export default function ProposalDetailPage() {
         contact_phone: (proposal.contact_phone as string) ?? '',
         recipient_company_name: (proposal.recipient_company_name as string) ?? '',
       });
+      const blocks = Array.isArray(proposal.blocks)
+        ? (proposal.blocks as Record<string, unknown>[]).map((b) => ({
+            uuid: (b.uuid as string) || '',
+            content_id: b.content_id as number | undefined,
+            title: (b.title || `Block`) as string,
+            type: (b.type || 'product-block') as string,
+            quantity: (b.quantity as number) ?? 1,
+            removed: false,
+          }))
+        : [];
+      setEditBlocks(blocks);
     }
+    setSaveError(null);
     setEditing(true);
   }
 
   async function handleSave() {
     setSaving(true);
+    setSaveError(null);
     try {
-      await apiPut(`/api/proposales/proposals/${uuid}`, formData);
+      // Build recipient object
+      const nameParts = formData.contact_name.split(' ');
+      const firstName = nameParts[0] || undefined;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
+
+      // Build blocks array from edit state (only content_id blocks can be sent)
+      const blockPayload = editBlocks
+        .filter((b) => !b.removed && b.content_id)
+        .map((b) => ({ content_id: b.content_id! }));
+
+      const payload: Record<string, unknown> = {
+        title_md: formData.title_md || undefined,
+        description_md: formData.description_md || undefined,
+        contact_email: formData.contact_email || undefined,
+        recipient: {
+          first_name: firstName,
+          last_name: lastName,
+          email: formData.contact_email || undefined,
+          phone: formData.contact_phone || undefined,
+          company_name: formData.recipient_company_name || undefined,
+        },
+      };
+
+      // Only include blocks if they were edited
+      if (editBlocks.length > 0) {
+        payload.blocks = blockPayload;
+      }
+
+      await apiPut(`/api/proposales/proposals/${uuid}`, payload);
       setEditing(false);
       mutate();
-    } catch {
-      // TODO: toast
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleStatusChange(status: string) {
-    try {
-      await apiPut(`/api/proposales/proposals/${uuid}`, { status });
-      setShowStatusModal(false);
-      mutate();
-    } catch {
-      // TODO: toast
     }
   }
 
@@ -139,8 +180,8 @@ export default function ProposalDetailPage() {
             </Button>
             {!editing ? (
               <>
-                <Button variant="secondary" onClick={() => setShowStatusModal(true)}>
-                  Change Status
+                <Button variant="secondary" onClick={() => mutate()}>
+                  ↻ Refresh
                 </Button>
                 <Button onClick={startEdit}>Edit</Button>
               </>
@@ -157,6 +198,12 @@ export default function ProposalDetailPage() {
           </div>
         }
       />
+
+      {saveError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="text-sm text-red-700">Save failed: {saveError}</p>
+        </div>
+      )}
 
       {/* Info Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -230,7 +277,73 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Blocks */}
-          {Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 ? (
+          {editing ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Blocks ({editBlocks.filter(b => !b.removed).length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {editBlocks.map((block, i) => block.removed ? null : (
+                    <div key={block.uuid || i} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{block.title}</p>
+                        <p className="text-xs text-gray-500">{block.type}{block.content_id ? ` · Content #${block.content_id}` : ''}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setEditBlocks(prev => prev.map((b, idx) =>
+                            idx === i ? { ...b, removed: true } : b
+                          ));
+                        }}
+                        className="shrink-0 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {editBlocks.filter(b => !b.removed).length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-4">No blocks — add content below</p>
+                  )}
+                  {/* Add block from content library */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                    <select
+                      value={addBlockId}
+                      onChange={(e) => setAddBlockId(e.target.value)}
+                      className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-gray-400 focus:outline-none"
+                    >
+                      <option value="">Select content to add...</option>
+                      {contentItems.map((item) => (
+                        <option key={item.variation_id} value={String(item.variation_id)}>
+                          {item.title?.en || Object.values(item.title || {})[0] || `Content #${item.variation_id}`}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      variant="secondary"
+                      disabled={!addBlockId}
+                      onClick={() => {
+                        const cid = parseInt(addBlockId, 10);
+                        const found = contentItems.find(c => c.variation_id === cid);
+                        const title = found?.title?.en || Object.values(found?.title || {})[0] || `Content #${cid}`;
+                        setEditBlocks(prev => [...prev, {
+                          uuid: `new-${Date.now()}`,
+                          content_id: cid,
+                          title: String(title),
+                          type: 'product-block',
+                          quantity: 1,
+                          removed: false,
+                        }]);
+                        setAddBlockId('');
+                      }}
+                    >
+                      + Add
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : Array.isArray(proposal.blocks) && (proposal.blocks as unknown[]).length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Blocks ({(proposal.blocks as unknown[]).length})</CardTitle>
@@ -371,29 +484,6 @@ export default function ProposalDetailPage() {
         </div>
       </div>
 
-      {/* Status Change Modal */}
-      <Modal open={showStatusModal} onClose={() => setShowStatusModal(false)}>
-        <ModalHeader>
-          <ModalTitle>Change Proposal Status</ModalTitle>
-        </ModalHeader>
-        <div className="grid grid-cols-2 gap-3">
-          {['draft', 'active', 'accepted', 'rejected', 'expired', 'withdrawn'].map((st) => (
-            <button
-              key={st}
-              onClick={() => handleStatusChange(st)}
-              disabled={proposal.status === st}
-              className="rounded-lg border border-gray-200 p-3 text-center text-sm font-medium capitalize transition-colors hover:bg-gray-100 hover:border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {st}
-            </button>
-          ))}
-        </div>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setShowStatusModal(false)}>
-            Cancel
-          </Button>
-        </ModalFooter>
-      </Modal>
     </div>
   );
 }

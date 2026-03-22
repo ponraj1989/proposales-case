@@ -1,5 +1,103 @@
 import { z } from 'zod';
 
+const integrationIconNameSchema = z.enum([
+  'person',
+  'attendees',
+  'accommodation',
+  'chevron-right',
+  'add',
+]);
+
+const integrationSelectFieldSchema = z.object({
+  type: z.literal('select'),
+  id: z.string().min(1),
+  helpLabel: z.string().optional(),
+  defaultValue: z.string().optional(),
+  placeholder: z.string().optional(),
+  required: z.boolean().optional(),
+  readOnly: z.boolean().optional(),
+  options: z.array(z.object({ name: z.string().min(1), value: z.string().optional() })).optional(),
+});
+
+const integrationTextFieldSchema = z.object({
+  type: z.enum(['text', 'url', 'tel', 'email', 'password']),
+  id: z.string().min(1),
+  helpLabel: z.string().optional(),
+  defaultValue: z.string().optional(),
+  placeholder: z.string().optional(),
+  required: z.boolean().optional(),
+  readOnly: z.boolean().optional(),
+  icon: integrationIconNameSchema.optional(),
+});
+
+const integrationNumberFieldSchema = z.object({
+  type: z.literal('number'),
+  id: z.string().min(1),
+  defaultValue: z.union([z.number(), z.string()]).optional(),
+  helpLabel: z.string().optional(),
+  placeholder: z.string().optional(),
+  required: z.boolean().optional(),
+  readOnly: z.boolean().optional(),
+  icon: integrationIconNameSchema.optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  integerOnly: z.boolean().optional(),
+});
+
+const integrationHiddenFieldSchema = z.object({
+  type: z.literal('hidden'),
+  defaultValue: z.union([z.string(), z.number(), z.boolean()]).optional(),
+});
+
+const integrationSwitchFieldSchema = z.object({
+  type: z.literal('switch'),
+  id: z.string().min(1),
+  defaultValue: z.boolean().optional(),
+  helpLabel: z.string().optional(),
+  readOnly: z.boolean().optional(),
+});
+
+const integrationLinkButtonFieldSchema = z.object({
+  type: z.literal('linkButton'),
+  label: z.string().min(1),
+  href: z.string().url(),
+  icon: integrationIconNameSchema,
+});
+
+const integrationDividerFieldSchema = z.object({
+  type: z.literal('divider'),
+  text: z.string().optional(),
+});
+
+const integrationHeaderFieldSchema = z.object({
+  type: z.literal('header'),
+  text: z.string().min(1),
+});
+
+const integrationTextBodyFieldSchema = z.object({
+  type: z.literal('textBody'),
+  text: z.string().min(1),
+  markdown: z.boolean().optional(),
+});
+
+export const integrationFieldSchema = z.union([
+  integrationSelectFieldSchema,
+  integrationTextFieldSchema,
+  integrationNumberFieldSchema,
+  integrationHiddenFieldSchema,
+  integrationSwitchFieldSchema,
+  integrationLinkButtonFieldSchema,
+  integrationDividerFieldSchema,
+  integrationHeaderFieldSchema,
+  integrationTextBodyFieldSchema,
+]);
+
+export const integrationFieldArraySchema = z.array(integrationFieldSchema);
+
+const integrationMetadataSchema = z
+  .record(z.unknown())
+  .and(z.object({ integration_fields: integrationFieldArraySchema.optional() }));
+
 // ─── Proposal Schemas ───
 const recipientSchema = z.union([
   z.object({ id: z.number() }),
@@ -9,6 +107,13 @@ const recipientSchema = z.union([
     email: z.string().email().optional(),
     phone: z.string().optional(),
     company_name: z.string().optional(),
+    sources: z.object({
+      integration: z.object({
+        id: z.number(),
+        contactId: z.string(),
+        metadata: integrationMetadataSchema.optional(),
+      }).optional(),
+    }).optional(),
   }),
 ]);
 
@@ -62,6 +167,22 @@ export const createProposalSchema = z.object({
 });
 
 export type CreateProposalInput = z.infer<typeof createProposalSchema>;
+
+export const updateProposalSchema = z.object({
+  title_md: z.string().optional(),
+  description_md: z.string().optional(),
+  contact_email: z.string().email().optional(),
+  recipient: recipientSchema.optional(),
+  blocks: z.array(blockInputSchema).optional(),
+  data: z.record(z.unknown()).optional(),
+  tax_options: z.object({
+    mode: z.enum(['standard', 'simplified', 'tax-free', 'none']).optional(),
+    tax_included: z.boolean().optional(),
+    tax_label_key: z.string().optional(),
+  }).optional(),
+}).passthrough();
+
+export type UpdateProposalInput = z.infer<typeof updateProposalSchema>;
 
 export const patchProposalDataSchema = z.object({
   data: z.record(z.unknown()),

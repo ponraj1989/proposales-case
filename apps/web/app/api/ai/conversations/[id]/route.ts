@@ -37,6 +37,10 @@ export async function PUT(
   if (!session)
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
 
+  const conversation = await getConversation(id);
+  if (!conversation || conversation.userId !== session)
+    return NextResponse.json({ error: { message: 'Not found' } }, { status: 404 });
+
   const body = await request.json();
 
   if (body.title) {
@@ -58,6 +62,10 @@ export async function DELETE(
   const session = await getSession();
   if (!session)
     return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
+
+  const conversation = await getConversation(id);
+  if (!conversation || conversation.userId !== session)
+    return NextResponse.json({ error: { message: 'Not found' } }, { status: 404 });
 
   await deleteConversation(id, session);
   return NextResponse.json({ success: true });

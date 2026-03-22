@@ -1,5 +1,6 @@
 import connectDB from '@/lib/mongodb';
 import { PmsSpace, PmsInventory, PmsHold, type IPmsSpace, type IPmsHold } from '@/lib/models';
+import { getSDK } from '@/lib/sdk';
 
 // ─── Types (matching packages/ai/src/tools/pms.ts) ───
 
@@ -90,58 +91,77 @@ const TIME_SLOTS: TimeSlot[] = [
   { id: 'full-day', label: 'Full Day', start: '08:00', end: '23:00' },
 ];
 
-const SEED_SPACES = [
-  {
-    spaceId: 'space-grand-ballroom',
-    venueId: 'venue-1',
-    name: 'Grand Ballroom',
-    type: 'banquet',
-    capacity: 500,
-    basePriceCents: 5600000,
-    amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers', 'Bridal suite access'],
-    description: 'Our flagship event space — ideal for weddings, galas, and large conferences.',
-  },
-  {
-    spaceId: 'space-boardroom',
-    venueId: 'venue-1',
-    name: 'Executive Boardroom',
-    type: 'boardroom',
-    capacity: 20,
-    basePriceCents: 1590000,
-    amenities: ['Smart TV', 'Whiteboard', 'Video conferencing', 'Espresso machine'],
-    description: 'An intimate meeting space for executive sessions and board meetings.',
-  },
-  {
-    spaceId: 'space-garden',
-    venueId: 'venue-1',
-    name: 'Rooftop Garden',
-    type: 'outdoor',
-    capacity: 150,
-    basePriceCents: 3200000,
-    amenities: ['Panoramic city view', 'Weather canopy', 'Bar area', 'Heating lamps'],
-    description: 'A stunning outdoor terrace overlooking Stockholm — perfect for cocktail receptions and summer events.',
-  },
-  {
-    spaceId: 'space-conference-a',
-    venueId: 'venue-1',
-    name: 'Conference Hall A',
-    type: 'conference',
-    capacity: 200,
-    basePriceCents: 2800000,
-    amenities: ['Projector', 'Podium', 'Microphones', 'Breakout rooms nearby'],
-    description: 'A modern conference hall ideal for seminars, product launches, and corporate events.',
-  },
-  {
-    spaceId: 'space-restaurant',
-    venueId: 'venue-1',
-    name: 'The Grand Restaurant',
-    type: 'restaurant',
-    capacity: 80,
-    basePriceCents: 1800000,
-    amenities: ['Private dining', 'Wine cellar', 'Chef table', 'Live cooking station'],
-    description: 'Exclusive private dining for intimate dinner parties and celebrations.',
-  },
-];
+// ─── Content → Space mapping ───
+// Derives PMS spaces from the Proposales Content API instead of hardcoded data.
+// Only content items whose title matches a known space keyword are treated as bookable spaces.
+
+interface ContentItem {
+  product_id: number;
+  variation_id: number;
+  title: Record<string, string>;
+  description: Record<string, string>;
+}
+
+const SPACE_KEYWORDS: Record<string, { type: Space['type']; capacity: number; amenities: string[] }> = {
+  ballroom:    { type: 'banquet',     capacity: 500, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers'] },
+  banquet:     { type: 'banquet',     capacity: 300, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Banquet seating'] },
+  boardroom:   { type: 'boardroom',   capacity: 20,  amenities: ['Smart TV', 'Whiteboard', 'Video conferencing', 'Espresso machine'] },
+  conference:  { type: 'conference',  capacity: 200, amenities: ['Projector', 'Podium', 'Microphones', 'Breakout rooms nearby'] },
+  restaurant:  { type: 'restaurant',  capacity: 80,  amenities: ['Private dining', 'Wine cellar', 'Chef table'] },
+  garden:      { type: 'outdoor',     capacity: 150, amenities: ['Panoramic view', 'Weather canopy', 'Bar area', 'Heating lamps'] },
+  rooftop:     { type: 'outdoor',     capacity: 150, amenities: ['Panoramic city view', 'Weather canopy', 'Bar area'] },
+  pool:        { type: 'outdoor',     capacity: 100, amenities: ['Poolside seating', 'Bar service', 'Sun loungers'] },
+  suite:       { type: 'boardroom',   capacity: 10,  amenities: ['Private lounge', 'Mini bar', 'Ensuite bathroom'] },
+};
+
+const BASE_PRICES: Record<Space['type'], number> = {
+  banquet: 250000,     // €2,500
+  conference: 150000,  // €1,500
+  boardroom: 50000,    // €500
+  restaurant: 120000,  // €1,200
+  outdoor: 200000,     // €2,000
+};
+
+function contentToSeedSpace(item: ContentItem): Partial<IPmsSpace> | null {
+  const title = (item.title?.en || Object.values(item.title || {})[0] || '').toLowerCase();
+  const desc = (item.description?.en || Object.values(item.description || {})[0] || '');
+
+  for (const [keyword, meta] of Object.entries(SPACE_KEYWORDS)) {
+    if (title.includes(keyword)) {
+      const slug = title.replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      return {
+        spaceId: `space-${slug}-${item.variation_id}`,
+        venueId: 'venue-1',
+        name: item.title?.en || Object.values(item.title || {})[0] || 'Unnamed Space',
+        type: meta.type,
+        capacity: meta.capacity,
+        basePriceCents: BASE_PRICES[meta.type],
+        amenities: meta.amenities,
+        description: desc || `${item.title?.en || 'Space'} — available for events and bookings.`,
+        contentVariationId: item.variation_id,
+      };
+    }
+  }
+  return null;
+}
+
+/** Fetch content items from Proposales API and map bookable spaces */
+async function fetchContentSpaces(): Promise<Partial<IPmsSpace>[]> {
+  try {
+    const sdk = getSDK();
+    const result = await sdk.content.list();
+    const items: ContentItem[] = Array.isArray(result.data) ? result.data : [];
+    const spaces: Partial<IPmsSpace>[] = [];
+    for (const item of items) {
+      const space = contentToSeedSpace(item);
+      if (space) spaces.push(space);
+    }
+    return spaces;
+  } catch (err) {
+    console.error('Failed to fetch content for PMS spaces:', err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
 
 // ─── Helpers ───
 
@@ -193,14 +213,34 @@ function dbHoldToHoldEntry(doc: IPmsHold): HoldEntry {
 
 let seeded = false;
 
+// Bump this version whenever SPACE_KEYWORDS change to force a re-seed
+const SEED_VERSION = 3;
+
 /** Seed PMS data into MongoDB if not already present */
 export async function seedPmsData(): Promise<void> {
   if (seeded) return;
   await connectDB();
 
+  // Migration: drop old hardcoded spaces that lack contentVariationId
+  const staleCount = await PmsSpace.countDocuments({ contentVariationId: { $exists: false } });
+  if (staleCount > 0) {
+    await PmsSpace.deleteMany({});
+    await PmsInventory.deleteMany({});
+  }
+
+  // Re-seed when keyword mappings change (version bump)
+  const existingSpace = await PmsSpace.findOne().lean();
+  if (existingSpace && (existingSpace as unknown as { seedVersion?: number }).seedVersion !== SEED_VERSION) {
+    await PmsSpace.deleteMany({});
+    await PmsInventory.deleteMany({});
+  }
+
   const spaceCount = await PmsSpace.countDocuments();
   if (spaceCount === 0) {
-    await PmsSpace.insertMany(SEED_SPACES as IPmsSpace[]);
+    const contentSpaces = await fetchContentSpaces();
+    if (contentSpaces.length > 0) {
+      await PmsSpace.insertMany(contentSpaces.map(s => ({ ...s, seedVersion: SEED_VERSION })));
+    }
   }
 
   const invCount = await PmsInventory.countDocuments();
@@ -241,6 +281,65 @@ export async function seedPmsData(): Promise<void> {
     // Insert in batches of 1000
     for (let i = 0; i < bulkOps.length; i += 1000) {
       await PmsInventory.insertMany(bulkOps.slice(i, i + 1000));
+    }
+  }
+
+  // Seed demo holds if none exist
+  const holdCount = await PmsHold.countDocuments();
+  if (holdCount === 0) {
+    const spaces = await PmsSpace.find().lean();
+    if (spaces.length > 0) {
+      const today = new Date();
+      const demoHolds: {
+        proposalUuid: string;
+        spaceId: string;
+        date: string;
+        timeSlotId: string;
+        guests: number;
+        eventType: string;
+        contactEmail: string;
+        contactName: string;
+        heldAt: Date;
+        expiresAt: Date;
+        status: 'held';
+      }[] = [];
+      const slotIds = ['morning', 'afternoon', 'evening'];
+      const eventTypes = ['Wedding Reception', 'Corporate Meeting', 'Gala Dinner', 'Conference', 'Product Launch'];
+      const contacts = [
+        { name: 'Emma Lindström', email: 'emma.lindstrom@example.com' },
+        { name: 'Marcus Berg', email: 'marcus.berg@example.com' },
+        { name: 'Sofia Karlsson', email: 'sofia.k@example.com' },
+        { name: 'Johan Nilsson', email: 'johan.n@example.com' },
+        { name: 'Anna Svensson', email: 'anna.s@example.com' },
+      ];
+
+      // Create holds spread across the next 30 days
+      for (let d = 1; d <= 25; d += 5) {
+        const date = new Date(today);
+        date.setDate(today.getDate() + d);
+        const dateStr = date.toISOString().split('T')[0];
+        const space = spaces[d % spaces.length];
+        const contact = contacts[d % contacts.length];
+        const slot = slotIds[d % slotIds.length];
+        const eventType = eventTypes[d % eventTypes.length];
+
+        demoHolds.push({
+          proposalUuid: `demo-hold-${dateStr}-${space.spaceId.slice(-6)}`,
+          spaceId: space.spaceId,
+          date: dateStr,
+          timeSlotId: slot,
+          guests: 20 + (d * 7) % 180,
+          eventType,
+          contactEmail: contact.email,
+          contactName: contact.name,
+          heldAt: today,
+          expiresAt: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 days
+          status: 'held',
+        });
+      }
+      if (demoHolds.length > 0) {
+        await PmsHold.insertMany(demoHolds);
+      }
     }
   }
 

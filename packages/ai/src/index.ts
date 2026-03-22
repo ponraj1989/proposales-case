@@ -4,6 +4,7 @@ import {
   createGetProposalTool,
   createCreateProposalTool,
   createPatchProposalTool,
+  createReviseProposalTool,
   createGenerateProposalDraftTool,
   createReviseProposalPricingTool,
   createListContentTool,
@@ -20,6 +21,7 @@ import {
   createCalculateEventPriceTool,
   createGetMonthAvailabilityTool,
   createSuggestFloorPlanTool,
+  createGenerateImageTool,
   type SendEsignEmailFn,
   type PmsService,
 } from './tools';
@@ -38,6 +40,7 @@ export function createAllTools(
     getProposal: createGetProposalTool(sdk),
     createProposal: createCreateProposalTool(sdk),
     patchProposal: createPatchProposalTool(sdk),
+    reviseProposal: createReviseProposalTool(sdk),
     generateProposalDraft: createGenerateProposalDraftTool(sdk, userInfo),
     reviseProposalPricing: createReviseProposalPricingTool(sdk, userInfo),
     listContent: createListContentTool(sdk),
@@ -48,12 +51,13 @@ export function createAllTools(
     queryProposalData: createQueryProposalDataTool(sdk),
     suggestPricing: createSuggestPricingTool(sdk),
     extractEventDetails: createExtractEventDetailsTool(),
-    acceptProposal: createAcceptProposalTool(sdk, userInfo, sendEsignEmail),
+    acceptProposal: createAcceptProposalTool(sdk, userInfo),
     checkAvailability: createCheckAvailabilityTool(pmsService),
     calculateEventPrice: createCalculateEventPriceTool(pmsService),
     getMonthAvailability: createGetMonthAvailabilityTool(pmsService),
     suggestFloorPlan: createSuggestFloorPlanTool(pmsService),
     requestUserInput: createRequestUserInputTool(),
+    generateImage: createGenerateImageTool(),
   };
 }
 
@@ -61,7 +65,7 @@ export function createAllTools(
 export function createCustomerTools(
   sdk: ProposalesSDK,
   userInfo?: { email?: string; name?: string },
-  sendEsignEmail?: SendEsignEmailFn,
+  _sendEsignEmail?: SendEsignEmailFn,
   pmsService?: PmsService,
 ) {
   return {
@@ -69,11 +73,13 @@ export function createCustomerTools(
     extractEventDetails: createExtractEventDetailsTool(),
     generateProposalDraft: createGenerateProposalDraftTool(sdk, userInfo),
     reviseProposalPricing: createReviseProposalPricingTool(sdk, userInfo),
-    acceptProposal: createAcceptProposalTool(sdk, userInfo, sendEsignEmail),
+    reviseProposal: createReviseProposalTool(sdk),
+    acceptProposal: createAcceptProposalTool(sdk, userInfo),
     checkAvailability: createCheckAvailabilityTool(pmsService),
     calculateEventPrice: createCalculateEventPriceTool(pmsService),
     getMonthAvailability: createGetMonthAvailabilityTool(pmsService),
     suggestFloorPlan: createSuggestFloorPlanTool(pmsService),
     requestUserInput: createRequestUserInputTool(),
+    generateImage: createGenerateImageTool(),
   };
 }

@@ -18,7 +18,7 @@ import {
   type Column,
 } from '@proposales/ui';
 import { cn } from '@proposales/ui';
-import { useProposals, apiPost, apiPut, useUser, useEmailLogs, type EmailLogEntry } from '@/lib/hooks';
+import { useProposals, useCompanies, useContent, apiPost, apiPut, useUser, useEmailLogs, type EmailLogEntry } from '@/lib/hooks';
 
 const STATUS_FILTERS = ['all', 'draft', 'active', 'accepted', 'rejected', 'expired', 'template'] as const;
 
@@ -36,20 +36,37 @@ export default function ProposalsPage() {
   const [searchText, setSearchText] = useState('');
   const [creating, setCreating] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiCreating, setAiCreating] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const [createForm, setCreateForm] = useState({
     eventType: '',
     guests: '',
     contactName: '',
     contactEmail: '',
+    contactCompany: '',
+    contactPhone: '',
     title: '',
     description: '',
+    invoicingEnabled: false,
+    taxMode: 'standard' as 'standard' | 'simplified' | 'tax-free' | 'none',
+    taxIncluded: true,
+    taxLabel: 'VAT',
   });
   const [generatingTitle, setGeneratingTitle] = useState(false);
   const [generatingDesc, setGeneratingDesc] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('kanban');
+  const [columnOverrides, setColumnOverrides] = useState<Record<string, string>>({});
 
   const { data: userData } = useUser();
   const isSales = userData?.role === 'sales';
+
+  // Fetch companies for company_id, content for pricing tips
+  const { data: companiesData } = useCompanies();
+  const { data: contentData } = useContent();
+  const companies: { id: number; name: string; currency: string; tax_mode: string }[] = companiesData?.data ?? [];
+  const defaultCompany = companies[0];
+  const contentItems: { variation_id: number; title: Record<string, string>; description: Record<string, string> }[] = contentData?.data ?? [];
 
   // Fetch email logs for sales users only
   const { data: emailLogsData } = useEmailLogs(isSales ? undefined : '__skip__');
@@ -66,45 +83,104 @@ export default function ProposalsPage() {
     : {};
 
   const params: Record<string, string> = {};
-  if (searchText) params.text = searchText;
   if (statusFilter !== 'all') params.status = statusFilter;
 
   const { data, error, isLoading, mutate } = useProposals(params);
 
-  const proposals: Record<string, unknown>[] = data?.data
+  const allProposals: Record<string, unknown>[] = data?.data
     ? Array.isArray(data.data)
       ? data.data
       : [data.data]
     : [];
 
+  // Client-side text search (the API may not support text filtering)
+  const proposals = searchText
+    ? allProposals.filter((p) => {
+        const needle = searchText.toLowerCase();
+        const title = ((p.title_md || p.title || '') as string).toLowerCase();
+        const contact = ((p.contact_name || p.recipient_name || '') as string).toLowerCase();
+        const email = ((p.contact_email || p.recipient_email || '') as string).toLowerCase();
+        const uuid = ((p.uuid || '') as string).toLowerCase();
+        return title.includes(needle) || contact.includes(needle) || email.includes(needle) || uuid.includes(needle);
+      })
+    : allProposals;
+
+  function getCardColumn(proposal: Record<string, unknown>): string {
+    const uuid = (proposal.uuid as string) || '';
+    if (uuid && columnOverrides[uuid]) return columnOverrides[uuid];
+
+    const status = (proposal.status as string) || '';
+    if (status === 'active' && (proposal.viewed_count as number) > 0) return 'viewed';
+    if (status === 'active') return 'active';
+    return status;
+  }
+
+  async function handleMoveProposal(uuid: string, toColumn: string) {
+    const mappedStatus = toColumn === 'viewed' ? 'active' : toColumn;
+
+    setColumnOverrides((prev) => ({ ...prev, [uuid]: toColumn }));
+
+    try {
+      await apiPut(`/api/proposales/proposals/${uuid}`, { status: mappedStatus });
+      await mutate();
+    } catch {
+      setColumnOverrides((prev) => {
+        const next = { ...prev };
+        delete next[uuid];
+        return next;
+      });
+    }
+  }
+
   async function handleCreateDraft() {
+    if (!defaultCompany) return;
     setCreating(true);
     try {
-      const result = await apiPost('/api/proposales/proposals', {
-        status: 'draft',
+      // Build recipient from form
+      const nameParts = (createForm.contactName || '').split(' ');
+      const firstName = nameParts[0] || undefined;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
+
+      const body: Record<string, unknown> = {
+        company_id: defaultCompany.id,
         language: 'en',
-        currency: 'EUR',
         title_md: createForm.title || undefined,
         description_md: createForm.description || undefined,
-        contact_name: createForm.contactName || undefined,
         contact_email: createForm.contactEmail || undefined,
-      });
-      const uuid = result?.data?.uuid;
+        recipient: {
+          first_name: firstName,
+          last_name: lastName,
+          email: createForm.contactEmail || undefined,
+          phone: createForm.contactPhone || undefined,
+          company_name: createForm.contactCompany || undefined,
+        },
+        data: {
+          event_type: createForm.eventType || undefined,
+          guests: createForm.guests ? parseInt(createForm.guests, 10) : undefined,
+          status: 'draft',
+          negotiation_round: 0,
+          discount_applied: 0,
+        },
+        invoicing_enabled: createForm.invoicingEnabled,
+        tax_options: {
+          mode: createForm.taxMode,
+          tax_included: createForm.taxIncluded,
+          tax_label_key: createForm.taxLabel || undefined,
+        },
+      };
+
+      const result = await apiPost('/api/proposales/proposals', body);
+      const uuid = result?.proposal?.uuid;
       if (uuid) {
-        // If we have a title or description, patch the proposal with them
-        if (createForm.title || createForm.description) {
-          await apiPut(`/api/proposales/proposals/${uuid}`, {
-            title_md: createForm.title || undefined,
-            description_md: createForm.description || undefined,
-            contact_name: createForm.contactName || undefined,
-            contact_email: createForm.contactEmail || undefined,
-          }).catch(() => {});
-        }
         router.push(`/dashboard/proposals/${uuid}`);
       }
       mutate();
       setShowCreateModal(false);
-      setCreateForm({ eventType: '', guests: '', contactName: '', contactEmail: '', title: '', description: '' });
+      setCreateForm({
+        eventType: '', guests: '', contactName: '', contactEmail: '',
+        contactCompany: '', contactPhone: '', title: '', description: '',
+        invoicingEnabled: false, taxMode: 'standard', taxIncluded: true, taxLabel: 'VAT',
+      });
     } catch {
       // TODO: toast
     } finally {
@@ -161,6 +237,100 @@ export default function ProposalsPage() {
       }
     } catch { /* ignore */ }
     setGeneratingDesc(false);
+  }
+
+  async function handleAiCreate() {
+    if (!defaultCompany || !aiPrompt.trim()) return;
+    setAiCreating(true);
+    try {
+      // Step 1: Extract structured data from free text
+      const extractRes = await fetch('/api/ai/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'extract', context: aiPrompt.trim() }),
+      });
+      const extracted = extractRes.ok ? (await extractRes.json()).extracted ?? {} : {};
+
+      const eventType = extracted.event_type || 'Event';
+      const guests = extracted.guests ? String(extracted.guests) : '';
+
+      // Step 2: Generate title
+      const titleRes = await fetch('/api/ai/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: eventType,
+          eventType,
+          guests,
+          context: aiPrompt.trim() + '. Generate ONLY a short, professional proposal title (one line, max 80 chars). No description.',
+        }),
+      });
+      let title = `${eventType} Proposal`;
+      if (titleRes.ok) {
+        const { description } = await titleRes.json();
+        title = description.split('\n')[0].replace(/^#+\s*/, '').replace(/\*\*/g, '').trim() || title;
+      }
+
+      // Step 3: Generate description
+      const descRes = await fetch('/api/ai/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          eventType,
+          guests,
+          context: aiPrompt.trim(),
+        }),
+      });
+      let description = '';
+      if (descRes.ok) {
+        const data = await descRes.json();
+        description = data.description || '';
+      }
+
+      // Step 4: Build recipient from extracted data
+      const nameParts = (extracted.contact_name || '').split(' ');
+      const firstName = nameParts[0] || undefined;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
+
+      const body: Record<string, unknown> = {
+        company_id: defaultCompany.id,
+        language: 'en',
+        title_md: title,
+        description_md: description,
+        contact_email: extracted.contact_email || undefined,
+        recipient: {
+          first_name: firstName,
+          last_name: lastName,
+          email: extracted.contact_email || undefined,
+          company_name: extracted.contact_company || undefined,
+        },
+        data: {
+          event_type: extracted.event_type || undefined,
+          event_date: extracted.event_date || undefined,
+          guests: extracted.guests || undefined,
+          room: extracted.room || undefined,
+          time_slot: extracted.time_slot || undefined,
+          notes: extracted.notes || undefined,
+          status: 'draft',
+          negotiation_round: 0,
+          discount_applied: 0,
+        },
+      };
+
+      const result = await apiPost('/api/proposales/proposals', body);
+      const newUuid = result?.proposal?.uuid;
+      if (newUuid) {
+        router.push(`/dashboard/proposals/${newUuid}`);
+      }
+      mutate();
+      setShowAiModal(false);
+      setAiPrompt('');
+    } catch {
+      // TODO: toast
+    } finally {
+      setAiCreating(false);
+    }
   }
 
   const columns: Column<Record<string, unknown>>[] = [
@@ -263,8 +433,11 @@ export default function ProposalsPage() {
                 Table
               </button>
             </div>
-            <Button onClick={() => setShowCreateModal(true)}>
-              + New Proposal
+            <Button variant="secondary" onClick={() => setShowAiModal(true)}>
+              ✨ AI Create
+            </Button>
+            <Button onClick={() => router.push('/dashboard/proposals/new')}>
+              + Manual Create
             </Button>
           </div>
         }
@@ -314,7 +487,14 @@ export default function ProposalsPage() {
           emptyMessage="No proposals found. Create your first one!"
         />
       ) : (
-        <KanbanBoard proposals={proposals} onCardClick={(uuid) => router.push(`/dashboard/proposals/${uuid}`)} isLoading={isLoading} emailStatusMap={emailStatusMap} />
+        <KanbanBoard
+          proposals={proposals}
+          onCardClick={(uuid) => router.push(`/dashboard/proposals/${uuid}`)}
+          onMoveCard={handleMoveProposal}
+          getColumn={getCardColumn}
+          isLoading={isLoading}
+          emailStatusMap={emailStatusMap}
+        />
       )}
 
       {/* AI-Assisted Create Proposal Modal */}
@@ -354,21 +534,82 @@ export default function ProposalsPage() {
               />
             </div>
           </div>
-          {/* Contact */}
+          {/* Recipient / Contact */}
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Contact Name"
+              label="Recipient Name"
               placeholder="John Doe"
               value={createForm.contactName}
               onChange={(e) => setCreateForm({ ...createForm, contactName: e.target.value })}
             />
             <Input
-              label="Contact Email"
+              label="Recipient Email"
               type="email"
               placeholder="john@company.com"
               value={createForm.contactEmail}
               onChange={(e) => setCreateForm({ ...createForm, contactEmail: e.target.value })}
             />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Company"
+              placeholder="Acme Inc."
+              value={createForm.contactCompany}
+              onChange={(e) => setCreateForm({ ...createForm, contactCompany: e.target.value })}
+            />
+            <Input
+              label="Phone"
+              placeholder="+46 70 123 4567"
+              value={createForm.contactPhone}
+              onChange={(e) => setCreateForm({ ...createForm, contactPhone: e.target.value })}
+            />
+          </div>
+          {/* Invoicing & Tax */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createForm.invoicingEnabled}
+                onChange={(e) => setCreateForm({ ...createForm, invoicingEnabled: e.target.checked })}
+                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+              />
+              <span className="text-xs font-medium text-gray-700">Enable invoicing</span>
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-[0.65rem] font-medium text-gray-500 mb-1">Tax Mode</label>
+                <select
+                  value={createForm.taxMode}
+                  onChange={(e) => setCreateForm({ ...createForm, taxMode: e.target.value as typeof createForm.taxMode })}
+                  className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-gray-400 focus:outline-none"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="simplified">Simplified</option>
+                  <option value="tax-free">Tax-free</option>
+                  <option value="none">None</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[0.65rem] font-medium text-gray-500 mb-1">Tax Included</label>
+                <select
+                  value={createForm.taxIncluded ? 'yes' : 'no'}
+                  onChange={(e) => setCreateForm({ ...createForm, taxIncluded: e.target.value === 'yes' })}
+                  className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-gray-400 focus:outline-none"
+                >
+                  <option value="yes">Included</option>
+                  <option value="no">Excluded</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[0.65rem] font-medium text-gray-500 mb-1">Tax Label</label>
+                <input
+                  value={createForm.taxLabel}
+                  onChange={(e) => setCreateForm({ ...createForm, taxLabel: e.target.value })}
+                  placeholder="VAT"
+                  className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-xs focus:border-gray-400 focus:outline-none"
+                />
+              </div>
+            </div>
           </div>
           {/* AI Title */}
           <div>
@@ -420,7 +661,7 @@ export default function ProposalsPage() {
 
           {/* Season / Price Tip */}
           {createForm.eventType && createForm.guests && (
-            <PricingTip eventType={createForm.eventType} guests={parseInt(createForm.guests) || 0} />
+            <PricingTip eventType={createForm.eventType} guests={parseInt(createForm.guests) || 0} contentItems={contentItems} />
           )}
         </div>
         <ModalFooter>
@@ -429,6 +670,55 @@ export default function ProposalsPage() {
           </Button>
           <Button onClick={handleCreateDraft} loading={creating}>
             Create Proposal
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      {/* AI One-Click Create Modal */}
+      <Modal open={showAiModal} onClose={() => setShowAiModal(false)}>
+        <ModalHeader>
+          <ModalTitle>✨ AI Quick Create</ModalTitle>
+        </ModalHeader>
+        <div className="px-6 py-4 space-y-4">
+          <p className="text-xs text-gray-500">Describe your event in plain text and AI will create a complete proposal draft instantly.</p>
+
+          <div>
+            <textarea
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="e.g. Conference for 120 guests on April 15 at Grand Ballroom, full day with lunch and AV equipment. Contact: John Doe, john@acme.com, Acme Inc."
+              className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm leading-relaxed focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/20 resize-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && aiPrompt.trim()) {
+                  handleAiCreate();
+                }
+              }}
+            />
+            <p className="text-[10px] text-gray-400 mt-1.5">Include event type, date, guest count, venue, contact info, and any special requirements. Press Ctrl+Enter to create.</p>
+          </div>
+
+          {aiCreating && (
+            <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 flex items-center gap-2">
+              <svg className="h-4 w-4 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <p className="text-xs font-medium text-indigo-700">AI is analyzing your request and generating the proposal...</p>
+            </div>
+          )}
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setShowAiModal(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleAiCreate}
+            loading={aiCreating}
+            disabled={!aiPrompt.trim()}
+          >
+            {aiCreating ? 'Creating...' : '✨ Create with AI'}
           </Button>
         </ModalFooter>
       </Modal>
@@ -441,14 +731,21 @@ export default function ProposalsPage() {
 function KanbanBoard({
   proposals,
   onCardClick,
+  onMoveCard,
+  getColumn,
   isLoading,
   emailStatusMap,
 }: {
   proposals: Record<string, unknown>[];
   onCardClick: (uuid: string) => void;
+  onMoveCard: (uuid: string, toColumn: string) => void;
+  getColumn: (proposal: Record<string, unknown>) => string;
   isLoading: boolean;
   emailStatusMap: Record<string, EmailLogEntry>;
 }) {
+  const [draggedUuid, setDraggedUuid] = useState<string | null>(null);
+  const [activeDropColumn, setActiveDropColumn] = useState<string | null>(null);
+
   if (isLoading) {
     return (
       <div className="flex gap-4 overflow-x-auto pb-4">
@@ -472,16 +769,36 @@ function KanbanBoard({
   return (
     <div className="flex gap-4 overflow-x-auto pb-4">
       {KANBAN_COLUMNS.map((col) => {
-        const colProposals = proposals.filter((p) => {
-          const status = p.status as string;
-          if (col.key === 'viewed') return status === 'active' && (p.viewed_count as number) > 0;
-          if (col.key === 'active') return status === 'active' && !(p.viewed_count as number);
-          return status === col.key;
-        });
+        const colProposals = proposals.filter((p) => getColumn(p) === col.key);
 
         return (
           <div key={col.key} className="flex-shrink-0 w-72">
-            <div className="rounded-xl border border-gray-200 bg-gray-50/30 p-3">
+            <div
+              className={cn(
+                'rounded-xl border border-gray-200 bg-gray-50/30 p-3 transition-colors',
+                activeDropColumn === col.key && 'ring-2 ring-gray-300 bg-gray-100/60',
+              )}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setActiveDropColumn(col.key);
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setActiveDropColumn(col.key);
+              }}
+              onDragLeave={() => {
+                if (activeDropColumn === col.key) setActiveDropColumn(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const uuid = e.dataTransfer.getData('text/plain');
+                setActiveDropColumn(null);
+                setDraggedUuid(null);
+                if (uuid) {
+                  onMoveCard(uuid, col.key);
+                }
+              }}
+            >
               {/* Column Header */}
               <div className="flex items-center justify-between mb-3 px-1">
                 <div className="flex items-center gap-2">
@@ -504,9 +821,20 @@ function KanbanBoard({
                   <div
                     key={p.uuid as string}
                     onClick={() => onCardClick(p.uuid as string)}
+                    draggable
+                    onDragStart={(e) => {
+                      const uuid = p.uuid as string;
+                      e.dataTransfer.setData('text/plain', uuid);
+                      setDraggedUuid(uuid);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedUuid(null);
+                      setActiveDropColumn(null);
+                    }}
                     className={cn(
                       'kanban-card cursor-pointer rounded-lg border bg-white p-3 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5',
                       col.border,
+                      draggedUuid === (p.uuid as string) && 'opacity-60',
                     )}
                     style={{ animationDelay: `${i * 50}ms` }}
                   >
@@ -565,22 +893,42 @@ function EmailStatusBadge({ status }: { status: EmailLogEntry['status'] }) {
 
 // ─── Smart Pricing Suggestion ───
 
-function PricingTip({ eventType, guests }: { eventType: string; guests: number }) {
+// ─── Peak / Holiday Season Calendar ───
+
+const HOLIDAY_SEASONS: { label: string; months: number[]; surcharge: number; icon: string }[] = [
+  { label: 'Peak Summer', months: [5, 6, 7], surcharge: 0.15, icon: '☀️' },          // Jun–Aug +15%
+  { label: 'Christmas / New Year', months: [11, 0], surcharge: 0.20, icon: '🎄' },    // Dec–Jan +20%
+  { label: 'Easter week', months: [2, 3], surcharge: 0.10, icon: '🐣' },              // Mar–Apr +10% (approx)
+  { label: 'Midsummer (Scandinavia)', months: [5], surcharge: 0.12, icon: '🌻' },     // Jun +12%
+];
+const OFF_PEAK_MONTHS = [1, 8, 9, 10]; // Feb, Sep, Oct, Nov — potential discounts
+
+function getSeasonInfo(month: number) {
+  const matched = HOLIDAY_SEASONS.filter((s) => s.months.includes(month));
+  const isOffPeak = OFF_PEAK_MONTHS.includes(month);
+  const totalSurcharge = matched.reduce((sum, s) => sum + s.surcharge, 0);
+  return { matched, isOffPeak, totalSurcharge };
+}
+
+interface ContentItem {
+  variation_id: number;
+  title: Record<string, string>;
+  description: Record<string, string>;
+}
+
+function PricingTip({ eventType, guests, contentItems = [] }: { eventType: string; guests: number; contentItems?: ContentItem[] }) {
   const now = new Date();
-  const month = now.getMonth(); // 0-indexed
-  const isPeak = month >= 5 && month <= 7; // Jun-Aug
-  const isOffPeak = month >= 10 || month <= 1; // Nov-Feb
+  const month = now.getMonth();
+  const { matched: seasons, isOffPeak, totalSurcharge } = getSeasonInfo(month);
   const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
-  // Rough base prices per event type in EUR (for suggestion only)
+  // Content-library based pricing if available
+  const contentCount = contentItems.length;
+
+  // Rough base prices per event type in EUR cents
   const basePrices: Record<string, number> = {
-    conference: 28000,
-    wedding: 56000,
-    meeting: 15900,
-    dinner: 18000,
-    seminar: 28000,
-    party: 32000,
-    accommodation: 5300,
+    conference: 28000, wedding: 56000, meeting: 15900,
+    dinner: 18000, seminar: 28000, party: 32000, accommodation: 5300,
   };
 
   const basePerEvent = basePrices[eventType] || 20000;
@@ -588,11 +936,16 @@ function PricingTip({ eventType, guests }: { eventType: string; guests: number }
 
   const tips: string[] = [];
 
-  if (isPeak) {
-    estimatedBase = Math.round(estimatedBase * 1.15);
-    tips.push('📅 Peak season (Jun–Aug): prices are +15% higher. Consider Sep–Nov for savings.');
+  // Season tips with detailed holiday info
+  if (seasons.length > 0) {
+    const names = seasons.map((s) => `${s.icon} ${s.label} (+${Math.round(s.surcharge * 100)}%)`).join(', ');
+    estimatedBase = Math.round(estimatedBase * (1 + totalSurcharge));
+    tips.push(`📅 Active season surcharges: ${names}. Total: +${Math.round(totalSurcharge * 100)}%.`);
+    tips.push('🗓️ Off-peak months (Feb, Sep–Nov) offer 10–15% savings — consider date flexibility for negotiation.');
   } else if (isOffPeak) {
-    tips.push('💰 Off-peak season: potential for discounted rates. Great time to book!');
+    tips.push('💰 Off-peak season: strong negotiation leverage. Discounts of 10–15% are common.');
+  } else {
+    tips.push('📅 Shoulder season — standard pricing with moderate negotiation room (5–8%).');
   }
 
   if (isWeekend) {
@@ -602,27 +955,39 @@ function PricingTip({ eventType, guests }: { eventType: string; guests: number }
     tips.push('✅ Weekday pricing — no weekend surcharge.');
   }
 
+  // Venue recommendation by headcount
   if (guests > 200) {
-    tips.push(`👥 Large group (${guests} pax): consider Grand Ballroom. Utilization surcharge may apply if >80% capacity.`);
+    tips.push(`👥 Large group (${guests} pax): Grand Ballroom recommended. Utilization surcharge may apply if >80% capacity.`);
   } else if (guests <= 20) {
     tips.push(`👥 Small group (${guests} pax): Executive Boardroom is ideal. Small-party discount of 10% may apply.`);
   } else if (guests <= 80) {
     tips.push(`👥 Medium group (${guests} pax): The Grand Restaurant or Conference Hall A would work well.`);
   }
 
+  // Content library insight
+  if (contentCount > 0) {
+    tips.push(`📦 ${contentCount} items in content library — blocks will pull real pricing from Proposales when the draft is created.`);
+  }
+
+  // Negotiation guidance
+  tips.push('🤝 Negotiation: Round 1 → 5–8% off | Round 2 → 10–15% off | Round 3 (final) → up to 20% off. Max 3 rounds.');
+
   // Per-person add-on estimates
   const mealsPerPerson = 31.80;
   const accomPerPerson = 53.00;
   const allInclusive = estimatedBase / 100 + (mealsPerPerson + accomPerPerson) * guests;
-  const bundle = allInclusive * 0.88; // 12% bundle discount
+  const bundle = allInclusive * 0.88;
 
   tips.push(`💡 All-inclusive estimate: ~€${Math.round(allInclusive).toLocaleString()} | Bundle deal (12% off): ~€${Math.round(bundle).toLocaleString()}`);
+
+  // Invoice tip
+  tips.push('🧾 Enable invoicing to collect company name, org number, and address on the active proposal for billing.');
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-1.5">
       <div className="flex items-center gap-1.5">
         <span className="text-sm">💡</span>
-        <span className="text-xs font-semibold text-gray-700">Smart Pricing Tips</span>
+        <span className="text-xs font-semibold text-gray-700">Smart Pricing & Season Tips</span>
       </div>
       {tips.map((tip, i) => (
         <p key={i} className="text-xs text-gray-600 leading-relaxed pl-5">{tip}</p>

@@ -134,37 +134,42 @@ const BookingSchema = new Schema<IBooking>(
   { timestamps: true },
 );
 
-// ─── Conversation (replaces Redis for persistence) ───
+// ─── Conversation (MongoDB source of truth, Redis cache) ───
 export interface IConversation extends Document {
-  userId: mongoose.Types.ObjectId;
+  conversationId: string;   // UUID used in APIs
+  userId: string;           // stable user ID (user-1, sales-1, google:email)
   title: string;
   messages: Array<{
     id: string;
     role: string;
     content: string;
+    parts?: unknown[];
+    toolInvocations?: unknown[];
     createdAt: number;
   }>;
-  eventId?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const ConversationSchema = new Schema<IConversation>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    conversationId: { type: String, required: true, unique: true },
+    userId: { type: String, required: true, index: true },
     title: { type: String, default: 'New Conversation' },
     messages: [
       {
         id: { type: String, required: true },
         role: { type: String, required: true },
         content: { type: String, default: '' },
+        parts: { type: Schema.Types.Mixed },
+        toolInvocations: { type: Schema.Types.Mixed },
         createdAt: { type: Number, default: Date.now },
       },
     ],
-    eventId: { type: Schema.Types.ObjectId, ref: 'Event' },
   },
   { timestamps: true },
 );
+ConversationSchema.index({ userId: 1, updatedAt: -1 });
 
 // ─── PMS Space ───
 export interface IPmsSpace extends Document {
@@ -176,6 +181,8 @@ export interface IPmsSpace extends Document {
   basePriceCents: number;
   amenities: string[];
   description: string;
+  contentVariationId?: number;
+  seedVersion?: number;
 }
 
 const PmsSpaceSchema = new Schema<IPmsSpace>(
@@ -188,6 +195,8 @@ const PmsSpaceSchema = new Schema<IPmsSpace>(
     basePriceCents: { type: Number, required: true },
     amenities: [{ type: String }],
     description: { type: String },
+    contentVariationId: { type: Number },
+    seedVersion: { type: Number },
   },
   { timestamps: true },
 );
@@ -247,6 +256,43 @@ const PmsHoldSchema = new Schema<IPmsHold>(
 );
 PmsHoldSchema.index({ spaceId: 1, date: 1, timeSlotId: 1 });
 
+// ─── User Proposal (tracks proposals created by a user via chat) ───
+export interface IUserProposal extends Document {
+  userEmail: string;
+  proposalUuid: string;
+  proposalTitle: string;
+  proposalUrl?: string;
+  status: 'draft' | 'active' | 'sent' | 'viewed' | 'accepted' | 'signed' | 'rejected' | 'expired';
+  totalAmountCents: number;
+  currency: string;
+  venueType?: string;
+  eventDate?: string;
+  guests?: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const UserProposalSchema = new Schema<IUserProposal>(
+  {
+    userEmail: { type: String, required: true, lowercase: true, trim: true, index: true },
+    proposalUuid: { type: String, required: true, unique: true },
+    proposalTitle: { type: String, required: true },
+    proposalUrl: { type: String },
+    status: {
+      type: String,
+      enum: ['draft', 'active', 'sent', 'viewed', 'accepted', 'signed', 'rejected', 'expired'],
+      default: 'draft',
+    },
+    totalAmountCents: { type: Number, default: 0 },
+    currency: { type: String, default: 'EUR' },
+    venueType: { type: String },
+    eventDate: { type: String },
+    guests: { type: Number },
+  },
+  { timestamps: true },
+);
+UserProposalSchema.index({ userEmail: 1, createdAt: -1 });
+
 // ─── Email Log ───
 export interface IEmailLog extends Document {
   proposalUuid?: string;
@@ -291,4 +337,5 @@ export const Conversation = mongoose.models.Conversation || mongoose.model<IConv
 export const PmsSpace = mongoose.models.PmsSpace || mongoose.model<IPmsSpace>('PmsSpace', PmsSpaceSchema);
 export const PmsInventory = mongoose.models.PmsInventory || mongoose.model<IPmsInventory>('PmsInventory', PmsInventorySchema);
 export const PmsHold = mongoose.models.PmsHold || mongoose.model<IPmsHold>('PmsHold', PmsHoldSchema);
+export const UserProposal = mongoose.models.UserProposal || mongoose.model<IUserProposal>('UserProposal', UserProposalSchema);
 export const EmailLog = mongoose.models.EmailLog || mongoose.model<IEmailLog>('EmailLog', EmailLogSchema);

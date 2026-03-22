@@ -79,7 +79,9 @@ function formatEUR(cents: number): string {
   return `€${(cents / 100).toLocaleString('en-IE', { minimumFractionDigits: 2 })}`;
 }
 
-// ─── Static Venue & Spaces ───
+// ─── Static Venue ───
+// Spaces are now derived from the Proposales Content API (via PMS DB seeding).
+// The in-memory fallback uses an empty list — always prefer the DB-backed PmsService.
 
 const VENUE: Venue = {
   id: 'venue-1',
@@ -88,58 +90,8 @@ const VENUE: Venue = {
   description: 'A premier event destination in central Stockholm offering world-class banquet halls, executive boardrooms, and scenic outdoor venues.',
 };
 
-const SPACES: Space[] = [
-  {
-    id: 'space-grand-ballroom',
-    venue_id: 'venue-1',
-    name: 'Grand Ballroom',
-    type: 'banquet',
-    capacity: 500,
-    base_price_cents: 5600000,
-    amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers', 'Bridal suite access'],
-    description: 'Our flagship event space — ideal for weddings, galas, and large conferences.',
-  },
-  {
-    id: 'space-boardroom',
-    venue_id: 'venue-1',
-    name: 'Executive Boardroom',
-    type: 'boardroom',
-    capacity: 20,
-    base_price_cents: 1590000,
-    amenities: ['Smart TV', 'Whiteboard', 'Video conferencing', 'Espresso machine'],
-    description: 'An intimate meeting space for executive sessions and board meetings.',
-  },
-  {
-    id: 'space-garden',
-    venue_id: 'venue-1',
-    name: 'Rooftop Garden',
-    type: 'outdoor',
-    capacity: 150,
-    base_price_cents: 3200000,
-    amenities: ['Panoramic city view', 'Weather canopy', 'Bar area', 'Heating lamps'],
-    description: 'A stunning outdoor terrace overlooking Stockholm — perfect for cocktail receptions and summer events.',
-  },
-  {
-    id: 'space-conference-a',
-    venue_id: 'venue-1',
-    name: 'Conference Hall A',
-    type: 'conference',
-    capacity: 200,
-    base_price_cents: 2800000,
-    amenities: ['Projector', 'Podium', 'Microphones', 'Breakout rooms nearby'],
-    description: 'A modern conference hall ideal for seminars, product launches, and corporate events.',
-  },
-  {
-    id: 'space-restaurant',
-    venue_id: 'venue-1',
-    name: 'The Grand Restaurant',
-    type: 'restaurant',
-    capacity: 80,
-    base_price_cents: 1800000,
-    amenities: ['Private dining', 'Wine cellar', 'Chef table', 'Live cooking station'],
-    description: 'Exclusive private dining for intimate dinner parties and celebrations.',
-  },
-];
+// Spaces come from Proposales Content API via PMS DB — no hardcoded spaces.
+const SPACES: Space[] = [];
 
 const TIME_SLOTS: TimeSlot[] = [
   { id: 'morning', label: 'Morning', start: '08:00', end: '12:00' },
@@ -266,7 +218,8 @@ export function holdSpace(request: {
   }
 
   const space = SPACES.find((s) => s.id === request.space_id);
-  if (!space) return { success: false, error: 'Space not found' };
+  // Space validation is optional — content-derived spaces may not be in the in-memory list
+  if (!space && SPACES.length > 0) return { success: false, error: 'Space not found' };
 
   const now = new Date();
   const expires = new Date(now);
@@ -429,17 +382,33 @@ export function checkAvailability(query: AvailabilityQuery): AvailableSlot[] {
 function calculatePrice(space: Space, date: string, slot: TimeSlot, guests: number): number {
   let price = space.base_price_cents;
 
-  // Weekend premium: +20%
   const d = new Date(date);
   const dayOfWeek = d.getDay();
+  const month = d.getMonth();
+
+  // Weekend premium: +20%
   if (dayOfWeek === 0 || dayOfWeek === 6) {
     price = Math.round(price * 1.2);
   }
 
-  // Peak season (Jun-Aug): +15%
-  const month = d.getMonth();
+  // Peak summer season (Jun-Aug): +15%
   if (month >= 5 && month <= 7) {
     price = Math.round(price * 1.15);
+  }
+
+  // Christmas / New Year (Dec-Jan): +20%
+  if (month === 11 || month === 0) {
+    price = Math.round(price * 1.2);
+  }
+
+  // Easter week (Mar-Apr): +10%
+  if (month === 2 || month === 3) {
+    price = Math.round(price * 1.1);
+  }
+
+  // Off-peak discount (Feb, Sep-Nov): -8%
+  if (month === 1 || (month >= 8 && month <= 10)) {
+    price = Math.round(price * 0.92);
   }
 
   // Time slot factor
@@ -680,18 +649,26 @@ export function createCalculateEventPriceTool(pms?: PmsService) {
       const month = d.getMonth();
       const dayOfWeek = d.getDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      const isPeak = month >= 5 && month <= 7;
-      const isOffPeak = month >= 10 || month <= 1;
+      const isPeakSummer = month >= 5 && month <= 7;
+      const isChristmas = month === 11 || month === 0;
+      const isEaster = month === 2 || month === 3;
+      const isOffPeak = month === 1 || (month >= 8 && month <= 10);
       const utilizationRatio = input.guests / space.capacity;
 
-      if (isPeak) {
-        pricingTips.push('📅 Peak season surcharge (+15%) is applied. Moving to Sep–Nov could save ~15%.');
+      if (isPeakSummer) {
+        pricingTips.push('☀️ Peak summer season surcharge (+15%) is applied. Moving to Sep–Nov could save ~15%.');
+      }
+      if (isChristmas) {
+        pricingTips.push('🎄 Christmas/New Year holiday surcharge (+20%) is active. Jan mid–Feb offers significantly lower rates.');
+      }
+      if (isEaster) {
+        pricingTips.push('🐣 Easter week surcharge (+10%) is applied. Dates outside Mar–Apr avoid this premium.');
       }
       if (isWeekend) {
         pricingTips.push('📆 Weekend premium (+20%) is active. A weekday event would save ~20%.');
       }
       if (isOffPeak) {
-        pricingTips.push('💰 Off-peak season — great timing for competitive pricing.');
+        pricingTips.push('💰 Off-peak season (8% discount applied) — great timing for competitive pricing and negotiation leverage.');
       }
       if (utilizationRatio > 0.8) {
         pricingTips.push(`👥 High utilization (${Math.round(utilizationRatio * 100)}% capacity) — 10% surcharge applied. A larger space removes this.`);
@@ -699,6 +676,7 @@ export function createCalculateEventPriceTool(pms?: PmsService) {
       if (utilizationRatio < 0.3) {
         pricingTips.push(`👥 Small group discount (10% off) — only using ${Math.round(utilizationRatio * 100)}% of capacity.`);
       }
+      pricingTips.push('🤝 Negotiation: Round 1 → 5–8% off | Round 2 → 10–15% off | Round 3 (final) → up to 20% off.');
       if (!(input.add_ons ?? []).includes('all_meals') && !(input.add_ons ?? []).some(a => ['breakfast', 'lunch', 'dinner'].includes(a))) {
         pricingTips.push('🍽️ Tip: Adding the All Meals package saves ~€3/person vs booking meals individually.');
       }
