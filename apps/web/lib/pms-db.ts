@@ -102,6 +102,12 @@ interface ContentItem {
   description: Record<string, string>;
 }
 
+type SpaceProfile = {
+  type?: Space['type'];
+  capacity?: number;
+  amenities?: string[];
+};
+
 const SPACE_KEYWORDS: Record<string, { type: Space['type']; capacity: number; amenities: string[] }> = {
   ballroom:    { type: 'banquet',     capacity: 500, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers'] },
   banquet:     { type: 'banquet',     capacity: 300, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Banquet seating'] },
@@ -112,6 +118,19 @@ const SPACE_KEYWORDS: Record<string, { type: Space['type']; capacity: number; am
   rooftop:     { type: 'outdoor',     capacity: 150, amenities: ['Panoramic city view', 'Weather canopy', 'Bar area'] },
   pool:        { type: 'outdoor',     capacity: 100, amenities: ['Poolside seating', 'Bar service', 'Sun loungers'] },
   suite:       { type: 'boardroom',   capacity: 10,  amenities: ['Private lounge', 'Mini bar', 'Ensuite bathroom'] },
+};
+
+const EXACT_SPACE_PROFILES: Record<string, SpaceProfile> = {
+  'banquet small': { type: 'banquet', capacity: 120, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Banquet seating'] },
+  'banquet medium': { type: 'banquet', capacity: 300, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Banquet seating'] },
+  'banquet grand': { type: 'banquet', capacity: 500, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers'] },
+  'boardroom small': { type: 'boardroom', capacity: 10, amenities: ['Smart TV', 'Whiteboard', 'Video conferencing'] },
+  'boardroom medium': { type: 'boardroom', capacity: 20, amenities: ['Smart TV', 'Whiteboard', 'Video conferencing', 'Espresso machine'] },
+  'boardroom grand': { type: 'boardroom', capacity: 40, amenities: ['Smart TV', 'Whiteboard', 'Video conferencing', 'Coffee station'] },
+  'conference small': { type: 'conference', capacity: 80, amenities: ['Projector', 'Podium', 'Microphones'] },
+  'conference medium': { type: 'conference', capacity: 150, amenities: ['Projector', 'Podium', 'Microphones', 'Breakout rooms nearby'] },
+  'conference grand': { type: 'conference', capacity: 250, amenities: ['Projector', 'Podium', 'Microphones', 'Breakout rooms nearby'] },
+  'grand ballroom': { type: 'banquet', capacity: 500, amenities: ['Stage', 'Dance floor', 'Built-in AV', 'Chandeliers'] },
 };
 
 const BASE_PRICES: Record<Space['type'], number> = {
@@ -127,24 +146,79 @@ const BASE_PRICES: Record<Space['type'], number> = {
 export { getContentPrice, formatContentPrice, type ContentPrice } from './content-prices';
 import { getContentPrice as lookupContentPrice } from './content-prices';
 
+function normalizeSpaceText(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function parseCapacityHint(title: string, description: string): number | null {
+  const combined = `${title} ${description}`;
+  const patterns = [
+    /(\d+)\s*(?:max|pax|guests|people)/i,
+    /capacity\s*[:\-]?\s*(\d+)/i,
+    /up\s*to\s*(\d+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = combined.match(pattern);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+
+  return null;
+}
+
+function resolveSpaceProfile(title: string, description: string): SpaceProfile | null {
+  const normalizedTitle = normalizeSpaceText(title);
+
+  if (EXACT_SPACE_PROFILES[normalizedTitle]) {
+    return EXACT_SPACE_PROFILES[normalizedTitle];
+  }
+
+  for (const [name, profile] of Object.entries(EXACT_SPACE_PROFILES)) {
+    if (normalizedTitle.includes(name)) {
+      return profile;
+    }
+  }
+
+  const parsedCapacity = parseCapacityHint(normalizedTitle, description);
+  if (parsedCapacity) {
+    const matchedKeyword = Object.entries(SPACE_KEYWORDS).find(([keyword]) => normalizedTitle.includes(keyword));
+    if (matchedKeyword) {
+      return {
+        type: matchedKeyword[1].type,
+        capacity: parsedCapacity,
+        amenities: matchedKeyword[1].amenities,
+      };
+    }
+  }
+
+  return null;
+}
+
 function contentToSeedSpace(item: ContentItem): Partial<IPmsSpace> | null {
-  const title = (item.title?.en || Object.values(item.title || {})[0] || '').toLowerCase();
+  const title = item.title?.en || Object.values(item.title || {})[0] || '';
   const desc = (item.description?.en || Object.values(item.description || {})[0] || '');
+  const normalizedTitle = normalizeSpaceText(title);
+  const resolvedProfile = resolveSpaceProfile(title, desc);
 
   for (const [keyword, meta] of Object.entries(SPACE_KEYWORDS)) {
-    if (title.includes(keyword)) {
-      const slug = title.replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (normalizedTitle.includes(keyword)) {
+      const slug = normalizedTitle.replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
       // Use the content price map so PMS availability matches the Spaces tab
       const contentPrice = lookupContentPrice(title);
-      const priceCents = contentPrice ? contentPrice.price_cents : BASE_PRICES[meta.type];
+      const type = resolvedProfile?.type ?? meta.type;
+      const capacity = resolvedProfile?.capacity ?? meta.capacity;
+      const amenities = resolvedProfile?.amenities ?? meta.amenities;
+      const priceCents = contentPrice ? contentPrice.price_cents : BASE_PRICES[type];
       return {
         spaceId: `space-${slug}-${item.variation_id}`,
         venueId: 'venue-1',
         name: item.title?.en || Object.values(item.title || {})[0] || 'Unnamed Space',
-        type: meta.type,
-        capacity: meta.capacity,
+        type,
+        capacity,
         basePriceCents: priceCents,
-        amenities: meta.amenities,
+        amenities,
         description: desc || `${item.title?.en || 'Space'} — available for events and bookings.`,
         contentVariationId: item.variation_id,
       };
@@ -222,7 +296,7 @@ function dbHoldToHoldEntry(doc: IPmsHold): HoldEntry {
 let seeded = false;
 
 // Bump this version whenever SPACE_KEYWORDS change to force a re-seed
-const SEED_VERSION = 4;
+const SEED_VERSION = 5;
 
 /** Seed PMS data into MongoDB if not already present */
 export async function seedPmsData(): Promise<void> {

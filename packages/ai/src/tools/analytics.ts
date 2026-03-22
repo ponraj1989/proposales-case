@@ -174,7 +174,7 @@ Returns structured data that should be passed directly to renderChart.`,
           'custom',
         ])
         .describe('What data aggregation to perform'),
-      limit: z.number().optional().describe('Max proposals to fetch (default: 25, max: 25)'),
+      limit: z.number().optional().describe('Max proposals to fetch (not limited by pagination)'),
       group_by: z
         .string()
         .optional()
@@ -184,15 +184,11 @@ Returns structured data that should be passed directly to renderChart.`,
         .optional()
         .describe('For custom queries: metric to compute'),
     }),
-    execute: async ({ query_type, limit, group_by, metric }) => {
-      const fetchLimit = Math.min(limit ?? 25, 25);
+    execute: async ({ query_type, group_by, metric }) => {
       const needsValues = ['revenue_by_month', 'value_by_company', 'avg_value_by_status', 'custom'].includes(query_type);
 
-      // Search for proposals (returns lightweight results: status, timestamps, title, uuid, data)
-      const searchResult = await sdk.proposals.search({}, fetchLimit);
-      const searchItems: ProposalSearchResult[] = Array.isArray(searchResult.data)
-        ? searchResult.data
-        : [searchResult.data];
+      // Search for ALL proposals via fan-out (no pagination cap)
+      const searchItems: ProposalSearchResult[] = await sdk.proposals.searchAll();
 
       // For queries that need pricing data (value_with_tax, etc.), fetch full proposals
       let fullProposals: Proposal[] = [];

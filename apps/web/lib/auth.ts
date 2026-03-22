@@ -35,7 +35,7 @@ function validatePasskey(passkey: string): { role: UserRole; label: string; stab
 
   // Check user passkey
   if (process.env.USER_PASSKEY_1 && trimmed === process.env.USER_PASSKEY_1) {
-    return { role: 'customer', label: 'Guest', stableUid: 'email:ponraja@gmail.com' };
+    return { role: 'customer', label: 'Guest', stableUid: 'email:toponraja@gmail.com' };
   }
 
   return null;
@@ -91,7 +91,7 @@ export async function createPasskeySession(
   if (result) {
     await connectDB();
     // Use configured email/name for passkey users
-    const email = result.role === 'customer' ? 'ponraja@gmail.com' : 'rajjose17@gmail.com';
+    const email = result.role === 'customer' ? 'toponraja@gmail.com' : 'rajjose17@gmail.com';
     const name = result.role === 'customer' ? 'Ponraj' : 'Sales Admin';
 
     let user = await User.findOne({ email });

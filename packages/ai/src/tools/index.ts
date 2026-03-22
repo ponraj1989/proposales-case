@@ -1,6 +1,7 @@
 export {
   createSearchProposalsTool,
   createGetProposalTool,
+  createListMyProposalsTool,
   createCreateProposalTool,
   createPatchProposalTool,
   createReviseProposalTool,

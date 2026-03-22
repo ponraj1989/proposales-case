@@ -2,7 +2,7 @@ import { getRedis } from './redis';
 
 export interface ActivityFeedEvent {
   id: string;
-  type: 'viewed' | 'signed' | 'commented' | 'created' | 'sent' | 'expired' | 'updated';
+  type: 'viewed' | 'signed' | 'commented' | 'created' | 'sent' | 'rejected' | 'expired' | 'updated';
   title: string;
   description: string;
   time: string;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import { integrationFieldSchema, type ProposalesSDK, type Proposal } from '@proposales/api-client';
+import { integrationFieldSchema, type ProposalesSDK, type Proposal, type ProposalSearchResult } from '@proposales/api-client';
 
 // ─── Content Price Map (matches Proposales dashboard pricing) ───
 const CONTENT_PRICE_MAP: Record<string, { price_cents: number; unit_type: string }> = {
@@ -101,15 +101,9 @@ export function createSearchProposalsTool(sdk: ProposalesSDK) {
         .record(z.string())
         .optional()
         .describe('Key-value pairs to filter proposals by their data field properties'),
-      limit: z
-        .number()
-        .min(1)
-        .max(25)
-        .optional()
-        .describe('Maximum number of results to return (default 10)'),
     }),
-    execute: async ({ filters, limit }) => {
-      const result = await sdk.proposals.search(filters, limit ?? 10);
+    execute: async ({ filters }) => {
+      const result = await sdk.proposals.searchAll(filters);
       return result;
     },
   });
@@ -125,6 +119,56 @@ export function createGetProposalTool(sdk: ProposalesSDK) {
     execute: async ({ uuid }) => {
       const result = await sdk.proposals.get(uuid);
       return result;
+    },
+  });
+}
+
+export function createListMyProposalsTool(sdk: ProposalesSDK, userInfo?: { email?: string; name?: string }) {
+  return tool({
+    description:
+      'List the current customer user\'s own proposals/bookings for selection before modification. Use this when the user asks to modify/revise a booking but has not provided a proposal UUID yet.',
+    inputSchema: z.object({}),
+    execute: async () => {
+      const userEmail = (userInfo?.email || '').trim().toLowerCase();
+      if (!userEmail) {
+        return {
+          type: 'my_proposals',
+          proposals: [],
+          message: 'User email is not available in context.',
+        };
+      }
+
+      const byContact = await sdk.proposals.searchAll({ contact_email: userEmail });
+      const byRecipient = await sdk.proposals.searchAll({ recipient_email: userEmail }).catch(() => []);
+
+      const merged = new Map<string, ProposalSearchResult>();
+      for (const item of [...byContact, ...byRecipient]) {
+        if (item?.uuid) merged.set(item.uuid, item);
+      }
+
+      const proposals = Array.from(merged.values())
+        .sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))
+        .slice(0, 20)
+        .map((proposal) => {
+          const meta = (proposal.data ?? {}) as Record<string, unknown>;
+          const guestsRaw = meta.guests;
+          const guests = typeof guestsRaw === 'number' ? guestsRaw : Number(guestsRaw);
+          return {
+            booking_number: proposal.uuid,
+            proposal_uuid: proposal.uuid,
+            title: proposal.title || 'Untitled Proposal',
+            status: proposal.status || 'draft',
+            event_date: typeof meta.event_date === 'string' ? meta.event_date : null,
+            guests: Number.isFinite(guests) ? guests : null,
+            updated_at: proposal.updated_at,
+          };
+        });
+
+      return {
+        type: 'my_proposals' as const,
+        proposals,
+        count: proposals.length,
+      };
     },
   });
 }
@@ -227,7 +271,7 @@ export function createPatchProposalTool(sdk: ProposalesSDK) {
 export function createReviseProposalTool(sdk: ProposalesSDK) {
   return tool({
     description:
-      'Revise an existing proposal by UUID. The user can quote their proposal reference ID (UUID) from the My Proposals page to revise any proposal — even after e-sign or acceptance. Uses PUT for top-level fields (title, description) and PATCH /v3/proposals/{uuid}/data for metadata fields. After updating, fetches and returns the updated proposal. Do NOT use this for price negotiation — use reviseProposalPricing for discounts instead.',
+      'Revise an existing proposal by UUID. The user can quote their proposal reference ID (UUID) from the My Proposals page to revise any proposal — even after e-sign or acceptance. Uses PATCH /v3/proposals/{uuid}/data for metadata fields. Supports both absolute guest updates (guests: 120) and relative guest updates (guest_delta: +20 or -10). After updating, fetches and returns the updated proposal. Do NOT use this for price negotiation — use reviseProposalPricing for discounts instead.',
     inputSchema: z.object({
       proposal_uuid: z.string().describe('UUID of the proposal to revise — the user can find this on their My Proposals page as the reference ID'),
       updates: z.object({
@@ -235,7 +279,8 @@ export function createReviseProposalTool(sdk: ProposalesSDK) {
         description: z.string().optional().describe('New proposal description'),
         notes: z.string().optional().describe('Updated special requests or notes'),
         event_date: z.string().optional().describe('Updated event date (YYYY-MM-DD)'),
-        guests: z.number().optional().describe('Updated guest count'),
+        guests: z.number().optional().describe('Updated guest count as an absolute total (e.g. 120)'),
+        guest_delta: z.number().optional().describe('Adjust guest count by a delta (e.g. +20 for "add 20 people", -10 for "remove 10 people")'),
         venue_type: z.string().optional().describe('Updated venue type'),
         event_type: z.string().optional().describe('Updated event type'),
         time_slot: z.string().optional().describe('Updated time slot (morning, afternoon, evening, full-day)'),
@@ -251,7 +296,6 @@ export function createReviseProposalTool(sdk: ProposalesSDK) {
       const patchData: Record<string, unknown> = {};
       if (updates.notes !== undefined) patchData.notes = updates.notes;
       if (updates.event_date !== undefined) patchData.event_date = updates.event_date;
-      if (updates.guests !== undefined) patchData.guests = updates.guests;
       if (updates.venue_type !== undefined) patchData.venue_type = updates.venue_type;
       if (updates.event_type !== undefined) patchData.event_type = updates.event_type;
       if (updates.time_slot !== undefined) patchData.time_slot = updates.time_slot;
@@ -262,25 +306,31 @@ export function createReviseProposalTool(sdk: ProposalesSDK) {
       }
 
       try {
-        // 1. Update top-level fields via PUT if title or description changed
-        const putData: Record<string, unknown> = {};
-        if (updates.title !== undefined) putData.title_md = updates.title;
-        if (updates.description !== undefined) putData.description_md = updates.description;
-        if (updates.contact_email !== undefined) putData.contact_email = updates.contact_email;
+        // Resolve guest updates: delta takes precedence over absolute when both are provided
+        if (updates.guest_delta !== undefined) {
+          const currentResult = await sdk.proposals.get(proposal_uuid);
+          const currentProposal: Proposal = currentResult.data;
+          const currentGuestsRaw = (currentProposal.data ?? {}).guests;
+          const currentGuests = typeof currentGuestsRaw === 'number'
+            ? currentGuestsRaw
+            : Number(currentGuestsRaw);
+          const safeCurrentGuests = Number.isFinite(currentGuests) ? Math.max(0, Math.floor(currentGuests)) : 0;
+          const nextGuests = Math.max(0, safeCurrentGuests + Math.trunc(updates.guest_delta));
+          patchData.guests = nextGuests;
+        } else if (updates.guests !== undefined) {
+          patchData.guests = Math.max(0, Math.floor(updates.guests));
+        }
+
+        // Merge all updates into the data sub-object via PATCH
+        if (updates.title !== undefined) patchData.title_md = updates.title;
+        if (updates.description !== undefined) patchData.description_md = updates.description;
+        if (updates.contact_email !== undefined) patchData.contact_email = updates.contact_email;
         if (updates.contact_name !== undefined) {
           const nameParts = updates.contact_name.split(' ');
-          putData.recipient = {
-            first_name: nameParts[0] || '',
-            last_name: nameParts.slice(1).join(' ') || '',
-            email: updates.contact_email,
-          };
+          patchData.recipient_first_name = nameParts[0] || '';
+          patchData.recipient_last_name = nameParts.slice(1).join(' ') || '';
         }
 
-        if (Object.keys(putData).length > 0) {
-          await sdk.proposals.update(proposal_uuid, putData);
-        }
-
-        // 2. Patch the proposal data sub-object for metadata fields
         if (Object.keys(patchData).length > 0) {
           await sdk.proposals.patchData(proposal_uuid, { data: patchData });
         }
@@ -309,7 +359,7 @@ export function createReviseProposalTool(sdk: ProposalesSDK) {
         const tax = Math.round(valueWithTax - valueWithoutTax) / 100;
         const total = valueWithTax / 100;
         const data = (proposal.data ?? {}) as Record<string, unknown>;
-        const allUpdatedFields = [...Object.keys(putData), ...Object.keys(patchData)];
+        const allUpdatedFields = Object.keys(patchData);
 
         return {
           type: 'proposal_revised' as const,
@@ -364,7 +414,7 @@ export function createGenerateProposalDraftTool(
     description:
       'Generate a proposal draft preview for user review. This does NOT create the proposal in Proposales — it only builds a preview card with item names from the content library. The UI renders this as an interactive card with Accept & Generate Proposal / Reject buttons. Call this after gathering all requirements. You MUST call listContent first to get available items and use their variation_id as content_id. NEVER invent prices — prices will be confirmed when the user accepts and the proposal is actually created. The result includes a draft_input object — you MUST pass this unchanged to acceptProposal when the user clicks Accept. CRITICAL: Title must be SHORT — just the event name (max 7 words). Description must be PRECISE — 1-2 factual sentences. Auto-select room by guest count and include catering items if mentioned.',
     inputSchema: z.object({
-      title: z.string().describe('SHORT elegant hotel event name — max 7 words. Must sound like a premium hotel booking package. Examples: "Grand Ballroom Wedding Reception", "Executive Boardroom Retreat", "Lakeside Gala Dinner", "Corporate Strategy Summit", "Luxury Suite Weekend Getaway". Do NOT include guest counts, dates, numbers, or generic words like Setup/Booking.'),
+      title: z.string().max(60).describe('STRICT 7-WORD LIMIT. Short elegant hotel event name — MAXIMUM 7 words, no exceptions. Count your words before submitting. Must sound like a premium hotel package. Good: "Grand Ballroom Wedding Reception" (4 words), "Executive Boardroom Retreat" (3 words), "Lakeside Gala Dinner" (3 words). BAD: "Corporate Strategy Summit and Planning for 50 Guests" (too long). Do NOT include guest counts, dates, numbers, or generic words like Setup/Booking.'),
       description: z
         .string()
         .describe('PRECISE 1-2 sentence description of the hotel booking and its included facilities. Mention venue/space, key services (catering, AV, accommodation), and guest capacity. Example: "Exclusive wedding reception for 200 guests in the Grand Ballroom with full-board catering, stage décor, and overnight accommodation." No marketing fluff.'),
@@ -415,6 +465,10 @@ export function createGenerateProposalDraftTool(
       discount_percent: z.number().min(0).max(50).optional().describe('Discount percentage to apply to all items (0-50). Use this when revising a draft BEFORE the proposal has been created — i.e. the user rejected the draft and asked for a discount within the same conversation.'),
     }),
     execute: async (input) => {
+      // ─── Enforce 7-word title limit ───
+      const titleWords = input.title.trim().split(/\s+/);
+      const safeTitle = titleWords.length > 7 ? titleWords.slice(0, 7).join(' ') : input.title.trim();
+
       const recipientEmail = userInfo?.email || input.recipient_email;
       const nameParts = (input.recipient_name || '').split(' ');
       const firstName = nameParts[0] || '';
@@ -509,7 +563,7 @@ export function createGenerateProposalDraftTool(
         proposalUrl: null,
         // Store full creation params so acceptProposal can forward them
         draft_input: {
-          title: input.title,
+          title: safeTitle,
           description: input.description,
           items: input.items,
           currency: input.currency,

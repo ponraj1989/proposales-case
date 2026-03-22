@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   PageHeader,
@@ -55,12 +55,43 @@ interface PricingInsight {
   suggestedDiscount: number;
 }
 
+interface CalendarDay {
+  date: string;
+  day: number;
+  dow: number;
+  status: 'available' | 'limited' | 'booked';
+  available_count: number;
+  total_count: number;
+}
+
+interface CalendarHold {
+  date: string;
+  space_id: string;
+  space_name: string;
+  expires_at: string;
+  status: string;
+}
+
+interface AvailabilityResult {
+  space_id: string;
+  space_name: string;
+  space_type: string;
+  capacity: number;
+  date: string;
+  time_slot: string;
+  time_slot_id: string;
+  price: string;
+  price_cents: number;
+  amenities: string[];
+}
+
 interface SelectedBlock {
   id: number;
   title: string;
   description: string;
   imageUrl?: string;
   quantity: number;
+  priceAdjustmentPercent?: number; // e.g., 10 for +10%, -15 for -15%
 }
 
 interface CustomField {
@@ -69,15 +100,125 @@ interface CustomField {
   value: string;
 }
 
-const EVENT_OPTIONS = [
-  'conference',
-  'wedding',
-  'meeting',
-  'dinner',
-  'seminar',
-  'party',
-  'accommodation',
+const DEFAULT_PREVIEW_IMAGE = '/images/Banquet%20Grand.webp';
+
+const EVENT_TILES = [
+  { value: 'conference', label: 'Conference', icon: '🎤' },
+  { value: 'wedding', label: 'Wedding', icon: '💍' },
+  { value: 'meeting', label: 'Meeting', icon: '🤝' },
+  { value: 'dinner', label: 'Dinner / Gala', icon: '🍽️' },
+  { value: 'party', label: 'Party', icon: '🎉' },
+  { value: 'seminar', label: 'Seminar', icon: '🎓' },
+  { value: 'workshop', label: 'Workshop', icon: '📋' },
+  { value: 'accommodation', label: 'Stay', icon: '🛏️' },
 ];
+
+const VENUE_TILES = [
+  { value: 'room', label: 'Hotel Room', icon: '🏨', desc: 'Luxury stay' },
+  { value: 'boardroom', label: 'Boardroom', icon: '💼', desc: '10–20 pax' },
+  { value: 'conference', label: 'Conference', icon: '🖥️', desc: '30–50 pax' },
+  { value: 'banquet', label: 'Banquet Hall', icon: '🎊', desc: '100–500 pax' },
+  { value: 'garden', label: 'Garden', icon: '🌿', desc: 'Open air' },
+  { value: 'restaurant', label: 'Restaurant', icon: '🍷', desc: 'Fine dining' },
+];
+
+const VENUE_IMAGES: Record<string, { url: string; label: string }> = {
+  room: {
+    url: '/images/Double%20Room.jpg',
+    label: 'Hotel Room',
+  },
+  boardroom: {
+    url: '/images/Boardroom%20Grand.jpg',
+    label: 'Boardroom',
+  },
+  conference: {
+    url: '/images/microphone%20and%20speakers.webp',
+    label: 'Conference Room',
+  },
+  banquet: {
+    url: '/images/Banquet%20Grand.webp',
+    label: 'Banquet Hall',
+  },
+  garden: {
+    url: '/images/decoration.jpeg',
+    label: 'Garden',
+  },
+  restaurant: {
+    url: '/images/Dinner.jpg',
+    label: 'Restaurant',
+  },
+  suite: {
+    url: '/images/Suite%20Room.webp',
+    label: 'Suite Room',
+  },
+};
+
+const TIME_SLOTS = [
+  { value: 'morning', label: 'Morning (8:00–12:00)' },
+  { value: 'afternoon', label: 'Afternoon (12:00–17:00)' },
+  { value: 'evening', label: 'Evening (17:00–22:00)' },
+  { value: 'full-day', label: 'Full Day' },
+];
+
+function normalizeTitleText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function buildShortTitleFallback(eventTypeRaw?: string, venueTypeRaw?: string): string {
+  const eventType = normalizeTitleText(eventTypeRaw || 'event');
+  const venueType = normalizeTitleText(venueTypeRaw || '');
+
+  if (eventType.includes('wedding')) return 'Banquet Wedding Reception';
+  if (eventType.includes('conference')) {
+    if (venueType.includes('banquet')) return 'Banquet Conference Session';
+    if (venueType.includes('boardroom')) return 'Boardroom Conference Session';
+    return 'Corporate Conference Session';
+  }
+  if (eventType.includes('meeting')) return 'Executive Meeting Session';
+  if (eventType.includes('accommodation') || eventType.includes('stay')) return 'Cozy Weekend Stay';
+  if (eventType.includes('dinner') || eventType.includes('gala')) return 'Elegant Gala Dinner';
+  if (eventType.includes('party') || eventType.includes('reception')) return 'Private Reception Event';
+
+  return 'Premium Event Experience';
+}
+
+function getVenueImage(venueType?: string | null): { url: string; label: string } | null {
+  if (!venueType) return null;
+  return VENUE_IMAGES[venueType] || null;
+}
+
+function sanitizeAiTitle(candidate: string, eventTypeRaw?: string, venueTypeRaw?: string): string {
+  const cleaned = candidate
+    .split('\n')[0]
+    .replace(/^#+\s*/, '')
+    .replace(/\*\*/g, '')
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(' ').filter(Boolean);
+  if (words.length >= 3 && words.length <= 5) return words.join(' ');
+  if (words.length > 5) return words.slice(0, 5).join(' ');
+
+  return buildShortTitleFallback(eventTypeRaw, venueTypeRaw);
+}
+
+function getDefaultQuantityForBlock(titleRaw: string, guestsRaw: string): number {
+  const title = normalizeTitleText(titleRaw);
+  const guestsNum = Number(guestsRaw);
+  const guests = Number.isFinite(guestsNum) && guestsNum > 0 ? Math.floor(guestsNum) : 1;
+
+  const isMeal = ['lunch', 'dinner', 'breakfast', 'all meals', 'full board', 'coffee', 'snacks'].some((k) => title.includes(k));
+  if (isMeal) return guests;
+
+  const isRoom = ['single room', 'double room', 'suite room', 'suite'].some((k) => title.includes(k));
+  if (isRoom) {
+    if (title.includes('double room')) return Math.max(1, Math.ceil(guests / 2));
+    return guests;
+  }
+
+  return 1;
+}
 
 export default function NewProposalBuilderPage() {
   const router = useRouter();
@@ -101,6 +242,8 @@ export default function NewProposalBuilderPage() {
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     eventType: '',
+    venueType: '',
+    timeSlot: '',
     eventDate: '',
     guests: '',
     contactName: '',
@@ -129,6 +272,19 @@ export default function NewProposalBuilderPage() {
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [pricingInsight, setPricingInsight] = useState<PricingInsight | null>(null);
 
+  // PMS Calendar
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  });
+  const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
+  const [calendarHolds, setCalendarHolds] = useState<CalendarHold[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSummary, setCalendarSummary] = useState<{ available: number; limited: number; booked: number; active_holds: number } | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityResult[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [selectedSpace, setSelectedSpace] = useState<AvailabilityResult | null>(null);
+
   const filteredContent = useMemo(() => {
     const query = contentSearch.trim().toLowerCase();
     if (!query) return contentItems;
@@ -148,6 +304,43 @@ export default function NewProposalBuilderPage() {
     [contentItems],
   );
 
+  // Calendar fetch
+  useEffect(() => {
+    setCalendarLoading(true);
+    const params = new URLSearchParams({ year: String(calendarMonth.year), month: String(calendarMonth.month) });
+    if (form.guests) params.set('guests', form.guests);
+    fetch(`/api/mock-pms/calendar?${params}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          setCalendarDays(data.days ?? []);
+          setCalendarHolds(data.holds ?? []);
+          setCalendarSummary(data.summary ?? null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setCalendarLoading(false));
+  }, [calendarMonth.year, calendarMonth.month, form.guests]);
+
+  // Live availability
+  useEffect(() => {
+    if (!form.eventDate || !form.guests) { setAvailability([]); return; }
+    setAvailabilityLoading(true);
+    const params = new URLSearchParams({ date: form.eventDate, guests: form.guests });
+    if (form.eventType) params.set('event_type', form.eventType);
+    if (form.timeSlot) params.set('time_slot', form.timeSlot);
+    fetch(`/api/mock-pms/availability?${params}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setAvailability(data?.results ?? []))
+      .catch(() => {})
+      .finally(() => setAvailabilityLoading(false));
+  }, [form.eventDate, form.guests, form.eventType, form.timeSlot]);
+
+  const prevMonth = () =>
+    setCalendarMonth((p) => (p.month === 1 ? { year: p.year - 1, month: 12 } : { ...p, month: p.month - 1 }));
+  const nextMonth = () =>
+    setCalendarMonth((p) => (p.month === 12 ? { year: p.year + 1, month: 1 } : { ...p, month: p.month + 1 }));
+
   async function runAIGeneration(mode: 'title' | 'description' | 'pricing') {
     const contentPayload = selectedBlocks.map((block) => ({ title: block.title, quantity: block.quantity }));
     const context = [
@@ -163,7 +356,7 @@ export default function NewProposalBuilderPage() {
       guests: form.guests ? Number(form.guests) : undefined,
       date: form.eventDate || undefined,
       context: mode === 'title'
-        ? `${context}. Generate ONLY a short proposal title, max 80 chars, no markdown.`
+        ? `${context}. Generate ONLY a premium proposal title in STRICT 4 to 5 words, one line only, no markdown, no extra text.`
         : context,
       contentItems: contentPayload,
     };
@@ -184,12 +377,8 @@ export default function NewProposalBuilderPage() {
   async function handleGenerateTitle() {
     setGeneratingTitle(true);
     try {
-      const data = await runAIGeneration('title');
-      const title = String(data.description || '')
-        .split('\n')[0]
-        .replace(/^#+\s*/, '')
-        .replace(/\*\*/g, '')
-        .trim();
+      const spaceType = selectedSpace?.space_type || form.venueType;
+      const title = buildShortTitleFallback(form.eventType, spaceType);
       setForm((prev) => ({ ...prev, title }));
     } catch {
       setError('Failed to generate a title.');
@@ -226,20 +415,44 @@ export default function NewProposalBuilderPage() {
     const title = item.title?.en || Object.values(item.title || {})[0] || 'Untitled item';
     const description = item.description?.en || Object.values(item.description || {})[0] || '';
     const imageUrl = item.images?.[0]?.url;
+    const defaultQuantity = getDefaultQuantityForBlock(title, form.guests);
 
     setSelectedBlocks((current) => {
       const existing = current.find((entry) => entry.id === item.variation_id);
       if (existing) {
         return current.map((entry) => entry.id === item.variation_id
-          ? { ...entry, quantity: entry.quantity + 1 }
+          ? { ...entry, quantity: entry.quantity + defaultQuantity }
           : entry);
       }
       return [
         ...current,
-        { id: item.variation_id, title, description, imageUrl, quantity: 1 },
+        { id: item.variation_id, title, description, imageUrl, quantity: defaultQuantity },
       ];
     });
   }
+
+  useEffect(() => {
+    if (!selectedSpace) return;
+    const spaceName = normalizeTitleText(selectedSpace.space_name || '');
+    if (!spaceName) return;
+
+    const matchedContent = contentItems.find((item) => {
+      const title = normalizeTitleText(item.title?.en || Object.values(item.title || {})[0] || '');
+      return title.includes(spaceName) || spaceName.includes(title);
+    });
+
+    if (!matchedContent) return;
+    setSelectedBlocks((current) => {
+      if (current.some((entry) => entry.id === matchedContent.variation_id)) return current;
+      const title = matchedContent.title?.en || Object.values(matchedContent.title || {})[0] || 'Untitled item';
+      const description = matchedContent.description?.en || Object.values(matchedContent.description || {})[0] || '';
+      const imageUrl = matchedContent.images?.[0]?.url;
+      return [
+        ...current,
+        { id: matchedContent.variation_id, title, description, imageUrl, quantity: 1 },
+      ];
+    });
+  }, [selectedSpace, contentItems]);
 
   function updateBlockQuantity(id: number, quantity: number) {
     setSelectedBlocks((current) => current
@@ -284,6 +497,26 @@ export default function NewProposalBuilderPage() {
 
   function removeExternalAttachment(id: string) {
     setExternalAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function handleApplyAIPricing() {
+    if (!pricingInsight) return;
+    // Apply the AI pricing adjustment (seasonMultiplier) to all blocks
+    const adjustmentPercent = Math.round((pricingInsight.seasonMultiplier - 1) * 100);
+    setSelectedBlocks((current) =>
+      current.map((block) => ({
+        ...block,
+        priceAdjustmentPercent: adjustmentPercent,
+      })),
+    );
+  }
+
+  function updateBlockPriceAdjustment(id: number, adjustmentPercent: number) {
+    setSelectedBlocks((current) =>
+      current.map((block) =>
+        block.id === id ? { ...block, priceAdjustmentPercent: adjustmentPercent } : block,
+      ),
+    );
   }
 
   async function handleCreateProposal() {
@@ -335,12 +568,20 @@ export default function NewProposalBuilderPage() {
           phone: form.contactPhone || undefined,
           company_name: form.contactCompany || undefined,
         },
-        blocks: selectedBlocks.map((block) => ({ content_id: block.id })),
+        blocks: selectedBlocks.map((block) => ({
+          content_id: block.id,
+          quantity: block.quantity,
+          price_adjustment_percent: block.priceAdjustmentPercent ?? 0,
+        })),
         attachments: attachmentPayload.length > 0 ? attachmentPayload : undefined,
         data: {
           event_type: form.eventType || undefined,
           event_date: form.eventDate || undefined,
           guests: form.guests ? parseInt(form.guests, 10) : undefined,
+          venue_type: form.venueType || undefined,
+          time_slot: form.timeSlot || undefined,
+          space_id: selectedSpace?.space_id || undefined,
+          space_name: selectedSpace?.space_name || undefined,
           notes: form.notes || undefined,
           status: 'draft',
           negotiation_round: 0,
@@ -371,6 +612,21 @@ export default function NewProposalBuilderPage() {
       const result = await apiPost('/api/proposales/proposals', payload);
       const uuid = result?.proposal?.uuid;
       if (uuid) {
+        // Book the selected PMS space
+        if (selectedSpace) {
+          fetch('/api/mock-pms/book', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              space_id: selectedSpace.space_id,
+              date: form.eventDate,
+              time_slot_id: selectedSpace.time_slot_id,
+              guests: form.guests ? parseInt(form.guests, 10) : 1,
+              contact_email: form.contactEmail || creatorEmail,
+              proposal_uuid: uuid,
+            }),
+          }).catch(() => {});
+        }
         router.push(`/dashboard/proposals/${uuid}`);
         return;
       }
@@ -384,6 +640,11 @@ export default function NewProposalBuilderPage() {
 
   const previewTitle = form.title || 'Untitled proposal';
   const previewRecipient = form.contactName || 'Recipient not set';
+  const previewVenueImage = getVenueImage(selectedSpace?.space_type || form.venueType);
+  const previewHeroImage = form.heroImageUrl
+    || previewVenueImage?.url
+    || selectedBlocks.find((block) => block.imageUrl)?.imageUrl
+    || DEFAULT_PREVIEW_IMAGE;
 
   return (
     <div className="space-y-6 p-6">
@@ -414,27 +675,79 @@ export default function NewProposalBuilderPage() {
             <CardHeader>
               <CardTitle>Event Setup</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">Event Type</label>
-                  <select
-                    value={form.eventType}
-                    onChange={(e) => setForm((prev) => ({ ...prev, eventType: e.target.value }))}
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-gray-400 focus:outline-none"
-                  >
-                    <option value="">Select type...</option>
-                    {EVENT_OPTIONS.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
+            <CardContent className="space-y-5">
+              {/* Event type tiles */}
+              <div>
+                <label className="mb-2 block text-xs font-medium text-gray-600">Event Type *</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {EVENT_TILES.map((et) => (
+                    <button
+                      key={et.value}
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, eventType: et.value }))}
+                      className={cn(
+                        'flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 text-center transition-all',
+                        form.eventType === et.value
+                          ? 'border-gray-900 bg-gray-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300',
+                      )}
+                    >
+                      <span className="text-2xl">{et.icon}</span>
+                      <span className={cn('text-[11px] font-medium leading-tight', form.eventType === et.value ? 'text-gray-900' : 'text-gray-600')}>
+                        {et.label}
+                      </span>
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              {/* Venue tiles */}
+              <div>
+                <label className="mb-2 block text-xs font-medium text-gray-600">Venue / Space Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {VENUE_TILES.map((v) => (
+                    <button
+                      key={v.value}
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, venueType: v.value }))}
+                      className={cn(
+                        'flex items-start gap-3 rounded-xl border-2 px-3 py-2.5 text-left transition-all',
+                        form.venueType === v.value
+                          ? 'border-gray-900 bg-gray-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300',
+                      )}
+                    >
+                      <span className="text-2xl">{v.icon}</span>
+                      <div>
+                        <p className={cn('text-sm font-medium', form.venueType === v.value ? 'text-gray-900' : 'text-gray-700')}>{v.label}</p>
+                        <p className="text-xs text-gray-500">{v.desc}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Date / time / guests */}
+              <div className="grid gap-4 md:grid-cols-3">
                 <Input
                   label="Event Date"
                   type="date"
                   value={form.eventDate}
                   onChange={(e) => setForm((prev) => ({ ...prev, eventDate: e.target.value }))}
                 />
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Time Slot</label>
+                  <select
+                    value={form.timeSlot}
+                    onChange={(e) => setForm((prev) => ({ ...prev, timeSlot: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-gray-400 focus:outline-none"
+                  >
+                    <option value="">Any time</option>
+                    {TIME_SLOTS.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <Input
                   label="Guest Count"
                   type="number"
@@ -487,6 +800,155 @@ export default function NewProposalBuilderPage() {
             </CardContent>
           </Card>
 
+          {/* ─── Availability Calendar ─── */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Availability Calendar</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-xl border border-gray-200 overflow-hidden">
+                {/* Month nav */}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                  <button type="button" onClick={prevMonth} className="p-1 rounded-lg hover:bg-gray-200 transition-colors">
+                    <svg className="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                  </button>
+                  <span className="text-sm font-semibold text-gray-800">
+                    {new Date(calendarMonth.year, calendarMonth.month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                  </span>
+                  <button type="button" onClick={nextMonth} className="p-1 rounded-lg hover:bg-gray-200 transition-colors">
+                    <svg className="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                  </button>
+                </div>
+
+                {calendarLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-transparent" />
+                  </div>
+                ) : (
+                  <>
+                    {/* Day labels */}
+                    <div className="grid grid-cols-7 text-center border-b border-gray-100">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                        <div key={d} className="py-1.5 text-[10px] font-semibold text-gray-400 uppercase">{d}</div>
+                      ))}
+                    </div>
+                    {/* Day cells */}
+                    <div className="grid grid-cols-7 gap-px bg-gray-100 p-px">
+                      {calendarDays.length > 0 && Array.from({ length: calendarDays[0].dow }).map((_, i) => (
+                        <div key={`e-${i}`} className="bg-white h-9" />
+                      ))}
+                      {calendarDays.map((day) => {
+                        const isSelected = form.eventDate === day.date;
+                        const held = calendarHolds.find((h) => h.date === day.date);
+                        return (
+                          <button
+                            key={day.date}
+                            type="button"
+                            onClick={() => { if (day.status !== 'booked') setForm((prev) => ({ ...prev, eventDate: day.date })); }}
+                            disabled={day.status === 'booked'}
+                            title={day.status === 'booked' ? 'Fully booked' : `${day.available_count}/${day.total_count} slots`}
+                            className={cn(
+                              'relative h-9 text-xs font-medium transition-all flex items-center justify-center',
+                              isSelected
+                                ? 'bg-gray-900 text-white'
+                                : day.status === 'available'
+                                  ? 'bg-white text-gray-800 hover:bg-green-50'
+                                  : day.status === 'limited'
+                                    ? 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                                    : 'bg-red-50 text-red-300 cursor-not-allowed',
+                            )}
+                          >
+                            {day.day}
+                            <span
+                              className={cn(
+                                'absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full',
+                                isSelected
+                                  ? 'bg-white'
+                                  : day.status === 'available'
+                                    ? 'bg-green-400'
+                                    : day.status === 'limited'
+                                      ? 'bg-amber-400'
+                                      : 'bg-red-400',
+                              )}
+                            />
+                            {held && !isSelected && <span className="absolute top-0 right-0.5 text-[8px]">🔒</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {/* Legend */}
+                <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-t border-gray-100 text-[10px]">
+                  <div className="flex items-center gap-3">
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400" />Available</span>
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" />Limited</span>
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />Booked</span>
+                  </div>
+                  {calendarSummary && (
+                    <span className="text-gray-500">
+                      {calendarSummary.available}✓ {calendarSummary.limited}⚠ {calendarSummary.booked}✕
+                      {calendarSummary.active_holds > 0 && ` ${calendarSummary.active_holds}🔒`}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ─── Space Availability ─── */}
+          {form.eventDate && form.guests && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Space Availability</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {availabilityLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-transparent" />
+                    Checking live availability...
+                  </div>
+                ) : availability.length === 0 ? (
+                  <p className="text-sm text-gray-500">No spaces available for the selected date and guest count.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {availability.map((slot) => {
+                      const isSelected =
+                        selectedSpace?.space_id === slot.space_id && selectedSpace?.time_slot_id === slot.time_slot_id;
+                      return (
+                        <button
+                          key={`${slot.space_id}-${slot.time_slot_id}`}
+                          type="button"
+                          onClick={() => setSelectedSpace(isSelected ? null : slot)}
+                          className={cn(
+                            'w-full flex items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition-all',
+                            isSelected ? 'border-gray-900 bg-gray-50' : 'border-gray-200 bg-white hover:border-gray-300',
+                          )}
+                        >
+                          <div>
+                            <p className={cn('text-sm font-semibold', isSelected ? 'text-gray-900' : 'text-gray-800')}>
+                              {slot.space_name}
+                              {isSelected && <span className="ml-2 text-xs font-medium text-green-600">✓ Selected</span>}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {slot.time_slot} · Up to {slot.capacity} guests
+                              {slot.amenities?.length > 0 && ` · ${slot.amenities.slice(0, 3).join(', ')}`}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0 ml-4">
+                            <p className="text-sm font-bold text-gray-900">{slot.price}</p>
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide">{slot.space_type}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>AI Copy Studio</CardTitle>
@@ -496,6 +958,9 @@ export default function NewProposalBuilderPage() {
                 <div className="mb-1 flex items-center justify-between">
                   <label className="text-xs font-medium text-gray-600">Proposal Title</label>
                   <Button variant="secondary" onClick={handleGenerateTitle} loading={generatingTitle}>
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-5.25a4.5 4.5 0 100 9 4.5 4.5 0 000-9z" />
+                    </svg>
                     AI Title
                   </Button>
                 </div>
@@ -510,6 +975,9 @@ export default function NewProposalBuilderPage() {
                 <div className="mb-1 flex items-center justify-between">
                   <label className="text-xs font-medium text-gray-600">Context / Description</label>
                   <Button variant="secondary" onClick={handleGenerateDescription} loading={generatingDescription}>
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-5.25a4.5 4.5 0 100 9 4.5 4.5 0 000-9z" />
+                    </svg>
                     AI Description
                   </Button>
                 </div>
@@ -561,6 +1029,9 @@ export default function NewProposalBuilderPage() {
                       </div>
                     ))}
                   </div>
+                  <Button onClick={handleApplyAIPricing} variant="primary" className="w-full">
+                    Apply AI Pricing to Blocks
+                  </Button>
                 </>
               ) : (
                 <div className="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500">
@@ -678,25 +1149,48 @@ export default function NewProposalBuilderPage() {
                 {selectedBlocks.length === 0 ? (
                   <div className="text-sm text-gray-500">No blocks selected yet.</div>
                 ) : selectedBlocks.map((block) => (
-                  <div key={block.id} className="flex flex-col gap-3 rounded-xl border border-gray-200 p-3 md:flex-row md:items-center">
-                    {block.imageUrl ? (
-                      <img src={block.imageUrl} alt={block.title} className="h-20 w-full rounded-lg object-cover md:w-32" />
-                    ) : null}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-gray-900">{block.title}</div>
-                      <div className="mt-1 text-xs text-gray-500">{block.description}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        value={block.quantity}
-                        onChange={(e) => updateBlockQuantity(block.id, Number(e.target.value))}
-                        className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                      />
+                  <div key={block.id} className="flex flex-col gap-3 rounded-xl border border-gray-200 p-3">
+                    <div className="flex items-start gap-3">
+                      {block.imageUrl ? (
+                        <img src={block.imageUrl} alt={block.title} className="h-20 w-20 rounded-lg object-cover" />
+                      ) : null}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-gray-900">{block.title}</div>
+                        <div className="mt-1 text-xs text-gray-500">{block.description}</div>
+                      </div>
                       <Button variant="secondary" onClick={() => removeBlock(block.id)}>
                         Remove
                       </Button>
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2">
+                      <div className="flex items-end gap-2">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={block.quantity}
+                            onChange={(e) => updateBlockQuantity(block.id, Number(e.target.value))}
+                            className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Price Adjustment (%)</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step={1}
+                            value={block.priceAdjustmentPercent ?? 0}
+                            onChange={(e) => updateBlockPriceAdjustment(block.id, Number(e.target.value))}
+                            placeholder="0"
+                            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                          />
+                          <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
+                            {block.priceAdjustmentPercent ?? 0 > 0 ? '+' : ''}{block.priceAdjustmentPercent ?? 0}%
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -849,9 +1343,14 @@ export default function NewProposalBuilderPage() {
             <CardContent className="space-y-4">
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
                 <div className="aspect-[16/9] bg-gradient-to-br from-gray-900 via-gray-700 to-gray-500">
-                  {form.heroImageUrl ? (
-                    <img src={form.heroImageUrl} alt={previewTitle} className="h-full w-full object-cover" />
-                  ) : null}
+                  <img
+                    src={previewHeroImage}
+                    alt={previewTitle}
+                    className="h-full w-full object-cover"
+                    onError={(event) => {
+                      event.currentTarget.src = DEFAULT_PREVIEW_IMAGE;
+                    }}
+                  />
                 </div>
                 <div className="space-y-4 p-5">
                   <div>

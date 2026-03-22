@@ -2,6 +2,7 @@ import type { ProposalesSDK } from '@proposales/api-client';
 import {
   createSearchProposalsTool,
   createGetProposalTool,
+  createListMyProposalsTool,
   createCreateProposalTool,
   createPatchProposalTool,
   createReviseProposalTool,
@@ -63,6 +64,7 @@ export function createCustomerTools(
   pmsService?: PmsService,
 ) {
   return {
+    listMyProposals: createListMyProposalsTool(sdk, userInfo),
     listContent: createListContentTool(sdk),
     extractEventDetails: createExtractEventDetailsTool(),
     generateProposalDraft: createGenerateProposalDraftTool(sdk, userInfo),

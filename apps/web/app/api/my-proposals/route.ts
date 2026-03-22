@@ -25,53 +25,98 @@ export async function GET() {
     .sort({ createdAt: -1 })
     .lean();
 
-  // Enrich with live Proposales API data
   const sdk = getSDK();
-  const enriched = await Promise.all(
-    userProposals.map(async (up) => {
-      let liveStatus: string | null = null;
-      let livePdfUrl: string | null = null;
-      let liveValueWithTax: number | null = null;
-      let liveViewedCount = 0;
-      let liveTitleMd: string | null = null;
-
-      try {
-        const result = await sdk.proposals.get(up.proposalUuid);
-        const d = result.data;
-        if (d) {
-          liveStatus = d.status ?? null;
-          livePdfUrl = d.pdf_url ?? null;
-          liveValueWithTax = d.value_with_tax ?? null;
-          liveViewedCount = (d as unknown as Record<string, unknown>).viewed_count as number ?? 0;
-          liveTitleMd = d.title_md ?? null;
-        }
-      } catch {
-        // API fetch failed — return stored data only
-      }
-
-      // Merge: prefer webhook-tracked status for signed/accepted, else use API status
-      let displayStatus = up.status;
-      if (liveStatus === 'accepted' || liveStatus === 'signed') displayStatus = 'signed';
-      else if (liveStatus === 'active' && up.status === 'draft') displayStatus = 'active';
-      else if (liveStatus === 'expired') displayStatus = 'expired';
-
-      return {
-        _id: String(up._id),
-        proposalUuid: up.proposalUuid,
-        proposalTitle: liveTitleMd || up.proposalTitle,
-        proposalUrl: livePdfUrl || up.proposalUrl || null,
-        status: displayStatus,
-        totalAmountCents: liveValueWithTax ?? up.totalAmountCents,
-        currency: up.currency,
-        venueType: up.venueType,
-        eventDate: up.eventDate,
-        guests: up.guests,
-        viewedCount: liveViewedCount,
-        createdAt: up.createdAt,
-        updatedAt: up.updatedAt,
-      };
-    }),
+  const storedByUuid = new Map(
+    userProposals.map((up) => [up.proposalUuid, up]),
   );
 
-  return NextResponse.json({ data: enriched });
+  // Source of truth: Proposales API filtered by this user email
+  const [contactItems, recipientItems] = await Promise.all([
+    sdk.proposals.searchAll({ contact_email: email.toLowerCase() }).catch(() => []),
+    sdk.proposals.searchAll({ recipient_email: email.toLowerCase() }).catch(() => []),
+  ]);
+
+  const mergedUuids = new Set<string>();
+  for (const item of [...contactItems, ...recipientItems]) {
+    if (item?.uuid) mergedUuids.add(item.uuid);
+  }
+  for (const up of userProposals) {
+    if (up.proposalUuid) mergedUuids.add(up.proposalUuid);
+  }
+
+  const allUuids = Array.from(mergedUuids);
+  const batchSize = 10;
+  const resultRows: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < allUuids.length; i += batchSize) {
+    const batch = allUuids.slice(i, i + batchSize);
+    const rows = await Promise.all(batch.map(async (uuid) => {
+      const stored = storedByUuid.get(uuid);
+      let live: Record<string, unknown> | null = null;
+
+      try {
+        const full = await sdk.proposals.get(uuid);
+        live = full.data as unknown as Record<string, unknown>;
+      } catch {
+        // keep fallback-only row
+      }
+
+      const liveStatus = (live?.status as string | undefined) ?? null;
+      const tracking = (live?.tracking as Record<string, unknown> | undefined) ?? undefined;
+      const signatures = (live?.signatures as unknown[] | undefined) ?? undefined;
+      const hasSignature = Array.isArray(signatures) && signatures.length > 0;
+      const viewedCount = (tracking?.number_of_views as number) ?? 0;
+      const firstViewedAt = tracking?.first_viewed_at;
+      const isViewed = viewedCount > 0 || !!firstViewedAt;
+
+      let displayStatus = (stored?.status ?? 'draft') as string;
+      if (hasSignature || liveStatus === 'accepted' || liveStatus === 'signed') {
+        displayStatus = 'signed';
+      } else if (liveStatus === 'rejected' || liveStatus === 'lost') {
+        displayStatus = 'rejected';
+      } else if (liveStatus === 'expired') {
+        displayStatus = 'expired';
+      } else if (liveStatus === 'active' && isViewed) {
+        displayStatus = 'viewed';
+      } else if (liveStatus === 'active') {
+        displayStatus = 'sent';
+      } else if (liveStatus === 'draft' || liveStatus === 'template') {
+        displayStatus = 'draft';
+      }
+
+      const liveData = (live?.data as Record<string, unknown> | undefined) ?? undefined;
+      const guestsRaw = liveData?.guests;
+      const guests = typeof guestsRaw === 'number' ? guestsRaw : Number(guestsRaw);
+
+      return {
+        _id: stored ? String(stored._id) : uuid,
+        proposalUuid: uuid,
+        proposalTitle: (live?.title_md as string | undefined) || stored?.proposalTitle || 'Untitled proposal',
+        proposalUrl: (live?.pdf_url as string | undefined) || stored?.proposalUrl || null,
+        status: displayStatus,
+        totalAmountCents: (live?.value_with_tax as number | undefined) ?? stored?.totalAmountCents ?? 0,
+        currency: (live?.currency as string | undefined) ?? stored?.currency ?? 'EUR',
+        venueType: (liveData?.venue_type as string | undefined) ?? stored?.venueType,
+        eventDate: (liveData?.event_date as string | undefined) ?? stored?.eventDate,
+        guests: Number.isFinite(guests) ? guests : (stored?.guests ?? undefined),
+        viewedCount,
+        createdAt: (live?.created_at as number | undefined)
+          ? new Date((live?.created_at as number) * 1000).toISOString()
+          : (stored?.createdAt ?? new Date().toISOString()),
+        updatedAt: (live?.updated_at as number | undefined)
+          ? new Date((live?.updated_at as number) * 1000).toISOString()
+          : (stored?.updatedAt ?? new Date().toISOString()),
+      };
+    }));
+
+    resultRows.push(...rows);
+  }
+
+  resultRows.sort((a, b) => {
+    const aTime = new Date(String(a.updatedAt)).getTime();
+    const bTime = new Date(String(b.updatedAt)).getTime();
+    return bTime - aTime;
+  });
+
+  return NextResponse.json({ data: resultRows });
 }

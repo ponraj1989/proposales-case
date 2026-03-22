@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useMyProposals, type MyProposal } from '@/lib/hooks';
 import { StatusBadge, formatCurrency, formatRelativeTime } from '@proposales/ui';
 
@@ -16,8 +17,16 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 
 const STATUS_STEPS = ['draft', 'sent', 'viewed', 'signed'] as const;
 
+function normalizeProgressStatus(status: string): 'draft' | 'sent' | 'viewed' | 'signed' {
+  if (status === 'signed' || status === 'accepted') return 'signed';
+  if (status === 'viewed') return 'viewed';
+  if (status === 'sent' || status === 'active') return 'sent';
+  return 'draft';
+}
+
 function ProposalStatusTracker({ status }: { status: string }) {
-  const currentIdx = STATUS_STEPS.indexOf(status as typeof STATUS_STEPS[number]);
+  const normalizedStatus = normalizeProgressStatus(status);
+  const currentIdx = STATUS_STEPS.indexOf(normalizedStatus);
   const isTerminal = status === 'rejected' || status === 'expired';
 
   return (
@@ -50,18 +59,62 @@ function ProposalStatusTracker({ status }: { status: string }) {
 }
 
 export default function BookingsPage() {
-  const { data, isLoading, error } = useMyProposals();
+  const { data, isLoading, error, mutate } = useMyProposals();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const proposals: MyProposal[] = data?.data ?? [];
+
+  // Auto-refresh every 20 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      mutate();
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [mutate]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await mutate();
+      setLastRefreshed(new Date());
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   return (
     <div className="space-y-6 p-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">My Proposals</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Track your proposals and their e-sign status
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">My Proposals</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Track your proposals and their e-sign status
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="Refresh proposals list"
+        >
+          <svg
+            className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.97 8.97 0 005.5 15m0 0H4m15.5 0H21" />
+          </svg>
+          Refresh
+        </button>
       </div>
+      {lastRefreshed && (
+        <p className="text-xs text-gray-400">
+          Last updated: {lastRefreshed.toLocaleTimeString()}
+        </p>
+      )}
 
       {/* Error */}
       {error && (
@@ -120,6 +173,10 @@ export default function BookingsPage() {
                         {statusInfo.label}
                       </span>
                     </div>
+
+                    <p className="mt-1 text-xs font-mono text-gray-500">
+                      Booking Number: {p.proposalUuid}
+                    </p>
 
                     <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-500">
                       {p.venueType && (

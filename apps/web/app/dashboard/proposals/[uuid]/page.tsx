@@ -16,7 +16,7 @@ import {
   formatCurrency,
   formatDate,
 } from '@proposales/ui';
-import { useProposal, apiPost, useContent } from '@/lib/hooks';
+import { useProposal, apiPatch, useContent } from '@/lib/hooks';
 
 interface EditBlock {
   uuid: string;
@@ -25,6 +25,63 @@ interface EditBlock {
   type: string;
   quantity: number;
   removed: boolean;
+}
+
+function toUnixSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? Math.floor(value / 1000) : value;
+  }
+  if (typeof value === 'string') {
+    const timestamp = new Date(value).getTime();
+    if (!Number.isNaN(timestamp)) return Math.floor(timestamp / 1000);
+  }
+  return null;
+}
+
+function buildActivityRows(proposal: Record<string, unknown>) {
+  const tracking = proposal.tracking as Record<string, unknown> | undefined;
+  const signatures = Array.isArray(proposal.signatures)
+    ? (proposal.signatures as Record<string, unknown>[])
+    : [];
+  const signedAt = tracking?.accepted_at ?? signatures[0]?.date;
+
+  const rows = [
+    {
+      label: 'Created',
+      time: toUnixSeconds(proposal.created_at),
+    },
+    {
+      label: 'Sent',
+      time: toUnixSeconds(tracking?.sent_at),
+    },
+    {
+      label: 'First viewed',
+      time: toUnixSeconds(tracking?.first_viewed_at),
+    },
+    {
+      label: 'Last viewed',
+      time: toUnixSeconds(tracking?.last_viewed_at),
+    },
+    {
+      label: 'E-signed',
+      time: toUnixSeconds(signedAt),
+    },
+    {
+      label: 'Rejected',
+      time: toUnixSeconds(tracking?.rejected_at),
+    },
+    {
+      label: 'Expired',
+      time: toUnixSeconds(tracking?.expired_at),
+    },
+  ].filter((row): row is { label: string; time: number } => row.time != null);
+
+  const viewCount = tracking?.number_of_views;
+  if (typeof viewCount === 'number') {
+    rows.push({ label: 'Views', time: -viewCount });
+  }
+
+  return rows;
 }
 
 export default function ProposalDetailPage() {
@@ -37,6 +94,7 @@ export default function ProposalDetailPage() {
   const [generatingDesc, setGeneratingDesc] = useState(false);
 
   const proposal = data?.data as Record<string, unknown> | undefined;
+  const activityRows = proposal ? buildActivityRows(proposal) : [];
 
   const { data: contentData } = useContent();
   const contentItems: { variation_id: number; title: Record<string, string> }[] = contentData?.data ?? [];
@@ -82,40 +140,23 @@ export default function ProposalDetailPage() {
     setSaving(true);
     setSaveError(null);
     try {
-      // Build recipient object
-      const nameParts = formData.contact_name.split(' ');
-      const firstName = nameParts[0] || undefined;
-      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
-
-      // Build blocks array from edit state (only content_id blocks can be sent)
-      const blockPayload = editBlocks
-        .filter((b) => !b.removed && b.content_id)
-        .map((b) => ({ content_id: b.content_id!, quantity: b.quantity }));
-
+      // PATCH data sub-object — the only supported update method in the Proposales API
       const existingData = (proposal?.data as Record<string, unknown>) || {};
-
-      // Use POST to recreate the proposal (PATCH /data returns 401 with current token)
-      const body = {
-        company_id: (proposal?.company_id as number) || 5230,
-        language: (proposal?.language as string) || 'en',
+      const nameParts = formData.contact_name.split(' ');
+      const patchData: Record<string, unknown> = {
+        ...existingData,
+        source: existingData.source || 'manual_edit',
         title_md: formData.title_md || undefined,
         description_md: formData.description_md || undefined,
         contact_email: formData.contact_email || undefined,
-        recipient: {
-          first_name: firstName,
-          last_name: lastName,
-          email: formData.contact_email || undefined,
-          phone: formData.contact_phone || undefined,
-          company_name: formData.recipient_company_name || undefined,
-        },
-        blocks: blockPayload,
-        data: {
-          ...existingData,
-          source: existingData.source || 'manual_edit',
-        },
+        contact_name: formData.contact_name || undefined,
+        contact_phone: formData.contact_phone || undefined,
+        recipient_first_name: nameParts[0] || undefined,
+        recipient_last_name: nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined,
+        recipient_company_name: formData.recipient_company_name || undefined,
       };
 
-      await apiPost('/api/proposales/proposals', body);
+      await apiPatch(`/api/proposales/proposals/${uuid}`, { data: patchData });
 
       setEditing(false);
       mutate();
@@ -443,31 +484,19 @@ export default function ProposalDetailPage() {
           </Card>
 
           {/* Tracking */}
-          {proposal.tracking ? (
+          {activityRows.length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Activity</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {(proposal.tracking as Record<string, unknown>).sent_at ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Sent</span>
-                      <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).sent_at as string).getTime() / 1000)}</span>
+                  {activityRows.map((row) => (
+                    <div key={`${row.label}-${row.time}`} className="flex justify-between">
+                      <span className="text-gray-500">{row.label}</span>
+                      <span>{row.label === 'Views' ? Math.abs(row.time) : formatDate(row.time)}</span>
                     </div>
-                  ) : null}
-                  {(proposal.tracking as Record<string, unknown>).first_viewed_at ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">First viewed</span>
-                      <span>{formatDate(new Date((proposal.tracking as Record<string, unknown>).first_viewed_at as string).getTime() / 1000)}</span>
-                    </div>
-                  ) : null}
-                  {(proposal.tracking as Record<string, unknown>).number_of_views != null ? (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Views</span>
-                      <span>{(proposal.tracking as Record<string, unknown>).number_of_views as number}</span>
-                    </div>
-                  ) : null}
+                  ))}
                 </div>
               </CardContent>
             </Card>

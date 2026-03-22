@@ -15,6 +15,7 @@ const EVENT_ICONS: Record<ActivityFeedEvent['type'], { icon: string; color: stri
   commented: { icon: '💬', color: 'bg-amber-100 text-amber-600' },
   created: { icon: '📄', color: 'bg-gray-200 text-gray-700' },
   sent: { icon: '📤', color: 'bg-gray-100 text-gray-600' },
+  rejected: { icon: '✕', color: 'bg-red-100 text-red-600' },
   expired: { icon: '⏰', color: 'bg-red-100 text-red-600' },
   updated: { icon: '✏️', color: 'bg-gray-100 text-gray-600' },
 };

@@ -169,22 +169,6 @@ export const createProposalSchema = z.object({
 
 export type CreateProposalInput = z.infer<typeof createProposalSchema>;
 
-export const updateProposalSchema = z.object({
-  title_md: z.string().optional(),
-  description_md: z.string().optional(),
-  contact_email: z.string().email().optional(),
-  recipient: recipientSchema.optional(),
-  blocks: z.array(blockInputSchema).optional(),
-  data: z.record(z.unknown()).optional(),
-  tax_options: z.object({
-    mode: z.enum(['standard', 'simplified', 'tax-free', 'none']).optional(),
-    tax_included: z.boolean().optional(),
-    tax_label_key: z.string().optional(),
-  }).optional(),
-}).passthrough();
-
-export type UpdateProposalInput = z.infer<typeof updateProposalSchema>;
-
 export const patchProposalDataSchema = z.object({
   uuid: z.string().optional(),
   data: z.record(z.unknown()),
@@ -194,7 +178,6 @@ export type PatchProposalDataInput = z.infer<typeof patchProposalDataSchema>;
 
 export const searchProposalsSchema = z.object({
   filters: z.record(z.string()).optional(),
-  limit: z.number().min(1).max(25).optional(),
 });
 
 export type SearchProposalsInput = z.infer<typeof searchProposalsSchema>;

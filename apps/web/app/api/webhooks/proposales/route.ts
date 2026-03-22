@@ -105,6 +105,17 @@ export async function POST(request: Request) {
           amount,
           currency,
         });
+      } else if (status === 'rejected') {
+        await pushActivityFeedEvent({
+          type: 'rejected',
+          title: 'Proposal Rejected',
+          description: `${displayName} rejected ${displayTitle}${fmtAmount ? ` — ${fmtAmount}` : ''}`,
+          proposalUuid: uuid,
+          proposalTitle,
+          recipientName: displayName,
+          amount,
+          currency,
+        });
       } else {
         await pushActivityFeedEvent({
           type: 'updated',

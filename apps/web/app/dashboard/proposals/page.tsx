@@ -18,9 +18,9 @@ import {
   type Column,
 } from '@proposales/ui';
 import { cn } from '@proposales/ui';
-import { useProposals, useCompanies, useContent, apiPost, apiPut, useUser, useEmailLogs, type EmailLogEntry } from '@/lib/hooks';
+import { useProposals, useCompanies, useContent, apiPost, apiPatch, useUser, useEmailLogs, type EmailLogEntry } from '@/lib/hooks';
 
-const STATUS_FILTERS = ['all', 'draft', 'active', 'accepted', 'rejected', 'expired', 'template'] as const;
+const STATUS_FILTERS = ['all', 'draft', 'active', 'accepted', 'rejected', 'lost', 'expired', 'template'] as const;
 
 const KANBAN_COLUMNS = [
   { key: 'draft', label: 'Draft', color: 'bg-gray-400', lightBg: 'bg-gray-50', border: 'border-gray-200' },
@@ -29,6 +29,120 @@ const KANBAN_COLUMNS = [
   { key: 'accepted', label: 'E-signed', color: 'bg-green-500', lightBg: 'bg-green-50', border: 'border-green-200' },
   { key: 'rejected', label: 'Rejected', color: 'bg-red-400', lightBg: 'bg-red-50', border: 'border-red-200' },
 ] as const;
+
+const AI_QUICK_CREATE_EXAMPLE = 'conference for 120 guests on april 15 at grand banquet hall with lunch and av equipment';
+const AI_QUICK_CREATE_WEDDING_EXAMPLE = 'wedding reception for 200 guests on june 10 at banquet grand with full board meals and stage decoration';
+
+type ContentItemLite = { variation_id: number; title: Record<string, string>; description: Record<string, string> };
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function getContentTitle(item: ContentItemLite): string {
+  return (item.title?.en || Object.values(item.title || {})[0] || '').trim();
+}
+
+function buildFallbackShortTitle(eventTypeRaw?: string, roomRaw?: string): string {
+  const eventType = normalizeText(eventTypeRaw || 'event');
+  const room = normalizeText(roomRaw || '');
+
+  if (eventType.includes('wedding')) return 'Banquet Wedding Reception Package';
+  if (eventType.includes('conference')) {
+    if (room.includes('grand banquet') || room.includes('banquet')) return 'Grand Banquet Conference Package';
+    if (room.includes('boardroom')) return 'Boardroom Conference Session Package';
+    return 'Corporate Conference Event Package';
+  }
+  if (eventType.includes('meeting')) return 'Executive Meeting Room Package';
+  if (eventType.includes('accommodation') || eventType.includes('stay')) return 'Cozy Weekend Stay Package';
+  if (eventType.includes('dinner') || eventType.includes('gala')) return 'Elegant Gala Dinner Package';
+  if (eventType.includes('party') || eventType.includes('reception')) return 'Private Reception Event Package';
+  return 'Premium Event Experience Package';
+}
+
+function sanitizeShortTitle(candidate: string, eventTypeRaw?: string, roomRaw?: string): string {
+  const cleaned = candidate
+    .replace(/^#+\s*/, '')
+    .replace(/\*\*/g, '')
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(' ').filter(Boolean);
+  if (words.length >= 4 && words.length <= 5) {
+    return words.join(' ');
+  }
+  if (words.length > 5) {
+    return words.slice(0, 5).join(' ');
+  }
+  return buildFallbackShortTitle(eventTypeRaw, roomRaw);
+}
+
+function includesAny(haystack: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => haystack.includes(keyword));
+}
+
+function autoSelectBlocksFromPrompt(params: {
+  prompt: string;
+  extracted: Record<string, unknown>;
+  contentItems: ContentItemLite[];
+}): Array<{ content_id: number; quantity: number }> {
+  const { prompt, extracted, contentItems } = params;
+  const combinedText = normalizeText(`${prompt} ${(extracted.room as string) || ''} ${(extracted.event_type as string) || ''}`);
+  const guestsRaw = extracted.guests;
+  const guests = typeof guestsRaw === 'number' ? guestsRaw : Number(guestsRaw);
+  const safeGuests = Number.isFinite(guests) && guests > 0 ? Math.floor(guests) : 1;
+  const selected = new Map<number, number>();
+
+  const addByPredicate = (
+    predicate: (normalizedTitle: string) => boolean,
+    quantity: number,
+  ) => {
+    const match = contentItems.find((item) => predicate(normalizeText(getContentTitle(item))));
+    if (match) {
+      selected.set(match.variation_id, quantity);
+    }
+    return !!match;
+  };
+
+  // Venue / space selection
+  if (includesAny(combinedText, ['grand banquet', 'banquet hall', 'banquet'])) {
+    addByPredicate((title) => title.includes('banquet grand') || title.includes('grand banquet'), 1)
+      || addByPredicate((title) => title.includes('banquet'), 1);
+  } else if (includesAny(combinedText, ['boardroom'])) {
+    addByPredicate((title) => title.includes('boardroom medium'), 1)
+      || addByPredicate((title) => title.includes('boardroom'), 1);
+  } else if (includesAny(combinedText, ['conference'])) {
+    addByPredicate((title) => title.includes('conference'), 1)
+      || addByPredicate((title) => title.includes('boardroom'), 1);
+  } else if (includesAny(combinedText, ['wedding', 'reception'])) {
+    addByPredicate((title) => title.includes('banquet grand'), 1)
+      || addByPredicate((title) => title.includes('banquet'), 1);
+  }
+
+  // Catering by guests
+  if (includesAny(combinedText, ['lunch'])) {
+    addByPredicate((title) => title.includes('lunch'), safeGuests);
+  }
+  if (includesAny(combinedText, ['dinner'])) {
+    addByPredicate((title) => title.includes('dinner'), safeGuests);
+  }
+  if (includesAny(combinedText, ['breakfast'])) {
+    addByPredicate((title) => title.includes('breakfast'), safeGuests);
+  }
+  if (includesAny(combinedText, ['all meals', 'full board'])) {
+    addByPredicate((title) => title.includes('all meals') || title.includes('full board'), safeGuests);
+  }
+
+  // AV equipment
+  const wantsAv = includesAny(combinedText, ['av', 'audio', 'visual', 'projector', 'microphone', 'speaker', 'sound']);
+  if (wantsAv) {
+    addByPredicate((title) => title.includes('projector'), 1);
+    addByPredicate((title) => title.includes('microphones and speakers') || title.includes('microphone'), 1);
+  }
+
+  return Array.from(selected.entries()).map(([content_id, quantity]) => ({ content_id, quantity }));
+}
 
 export default function ProposalsPage() {
   const router = useRouter();
@@ -39,6 +153,7 @@ export default function ProposalsPage() {
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiCreating, setAiCreating] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiError, setAiError] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState({
     eventType: '',
     guests: '',
@@ -120,7 +235,7 @@ export default function ProposalsPage() {
     // E-signed / accepted
     if (apiStatus === 'accepted' || (signatures && signatures.length > 0)) return 'accepted';
     // Rejected
-    if (apiStatus === 'rejected') return 'rejected';
+    if (apiStatus === 'rejected' || apiStatus === 'lost') return 'rejected';
     // Expired
     if (apiStatus === 'expired') return 'expired';
 
@@ -147,7 +262,7 @@ export default function ProposalsPage() {
     setColumnOverrides((prev) => ({ ...prev, [uuid]: toColumn }));
 
     try {
-      await apiPut(`/api/proposales/proposals/${uuid}`, { status: mappedStatus });
+      await apiPatch(`/api/proposales/proposals/${uuid}`, { data: { status: mappedStatus } });
       await mutate();
     } catch {
       setColumnOverrides((prev) => {
@@ -266,94 +381,145 @@ export default function ProposalsPage() {
   }
 
   async function handleAiCreate() {
-    if (!defaultCompany || !aiPrompt.trim()) return;
+    if (!aiPrompt.trim()) return;
+    const companyId = defaultCompany?.id ?? 5230;
     setAiCreating(true);
+    setAiError(null);
     try {
       // Step 1: Extract structured data from free text
-      const extractRes = await fetch('/api/ai/generate-description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'extract', context: aiPrompt.trim() }),
-      });
-      const extracted = extractRes.ok ? (await extractRes.json()).extracted ?? {} : {};
-
-      const eventType = extracted.event_type || 'Event';
-      const guests = extracted.guests ? String(extracted.guests) : '';
-
-      // Step 2: Generate title
-      const titleRes = await fetch('/api/ai/generate-description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: eventType,
-          eventType,
-          guests,
-          context: aiPrompt.trim() + '. Generate ONLY a short, professional proposal title (one line, max 80 chars). No description.',
-        }),
-      });
-      let title = `${eventType} Proposal`;
-      if (titleRes.ok) {
-        const { description } = await titleRes.json();
-        title = description.split('\n')[0].replace(/^#+\s*/, '').replace(/\*\*/g, '').trim() || title;
+      let extracted: Record<string, unknown> = {};
+      try {
+        const extractRes = await fetch('/api/ai/generate-description', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'extract', context: aiPrompt.trim() }),
+        });
+        if (extractRes.ok) {
+          extracted = (await extractRes.json()).extracted ?? {};
+        }
+      } catch {
+        // Continue with empty extraction
       }
 
-      // Step 3: Generate description
-      const descRes = await fetch('/api/ai/generate-description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          eventType,
-          guests,
-          context: aiPrompt.trim(),
-        }),
-      });
+      const eventType = (extracted.event_type as string) || 'Event';
+      const guests = extracted.guests ? String(extracted.guests) : '';
+
+      // Step 2: Generate title (best-effort)
+      let title = buildFallbackShortTitle(eventType, extracted.room as string | undefined);
+      try {
+        const titleRes = await fetch('/api/ai/generate-description', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: eventType,
+            eventType,
+            guests,
+            context: `${aiPrompt.trim()}. Generate ONLY a short premium proposal title with STRICT 4 to 5 words. Return exactly one line title only, no description.`,
+          }),
+        });
+        if (titleRes.ok) {
+          const { description } = await titleRes.json();
+          title = sanitizeShortTitle(description.split('\n')[0] || '', eventType, extracted.room as string | undefined);
+        }
+      } catch {
+        // Use default title
+      }
+
+      title = sanitizeShortTitle(title, eventType, extracted.room as string | undefined);
+
+      // Step 3: Generate description (best-effort)
       let description = '';
-      if (descRes.ok) {
-        const data = await descRes.json();
-        description = data.description || '';
+      try {
+        const descRes = await fetch('/api/ai/generate-description', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title,
+            eventType,
+            guests,
+            context: aiPrompt.trim(),
+          }),
+        });
+        if (descRes.ok) {
+          const data = await descRes.json();
+          description = data.description || '';
+        }
+      } catch {
+        // Use empty description
       }
 
       // Step 4: Build recipient from extracted data
-      const nameParts = (extracted.contact_name || '').split(' ');
+      const nameParts = ((extracted.contact_name as string) || '').split(' ');
       const firstName = nameParts[0] || undefined;
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined;
 
+      // Validate email format before including it
+      const rawEmail = (extracted.contact_email as string) || '';
+      const contactEmail = rawEmail.includes('@') ? rawEmail : undefined;
+
+      const recipient: Record<string, unknown> = {};
+      if (firstName) recipient.first_name = firstName;
+      if (lastName) recipient.last_name = lastName;
+      if (contactEmail) recipient.email = contactEmail;
+      if (extracted.contact_company) recipient.company_name = extracted.contact_company;
+
       const body: Record<string, unknown> = {
-        company_id: defaultCompany.id,
+        company_id: companyId,
         language: 'en',
         title_md: title,
         description_md: description,
-        contact_email: extracted.contact_email || undefined,
-        recipient: {
-          first_name: firstName,
-          last_name: lastName,
-          email: extracted.contact_email || undefined,
-          company_name: extracted.contact_company || undefined,
-        },
-        data: {
-          event_type: extracted.event_type || undefined,
-          event_date: extracted.event_date || undefined,
-          guests: extracted.guests || undefined,
-          room: extracted.room || undefined,
-          time_slot: extracted.time_slot || undefined,
-          notes: extracted.notes || undefined,
-          status: 'draft',
-          negotiation_round: 0,
-          discount_applied: 0,
-        },
       };
+      if (contactEmail) body.contact_email = contactEmail;
+      if (Object.keys(recipient).length > 0) body.recipient = recipient;
 
-      const result = await apiPost('/api/proposales/proposals', body);
-      const newUuid = result?.proposal?.uuid;
-      if (newUuid) {
-        router.push(`/dashboard/proposals/${newUuid}`);
+      const dataPayload: Record<string, unknown> = {
+        status: 'draft',
+        negotiation_round: 0,
+        discount_applied: 0,
+      };
+      if (extracted.event_type) dataPayload.event_type = extracted.event_type;
+      if (extracted.event_date) dataPayload.event_date = extracted.event_date;
+      if (extracted.guests) dataPayload.guests = extracted.guests;
+      if (extracted.room) dataPayload.room = extracted.room;
+      if (extracted.time_slot) dataPayload.time_slot = extracted.time_slot;
+      if (extracted.notes) dataPayload.notes = extracted.notes;
+      body.data = dataPayload;
+
+      // Step 4b: Auto-pick content blocks from prompt (space + guests + services)
+      const autoBlocks = autoSelectBlocksFromPrompt({
+        prompt: aiPrompt.trim(),
+        extracted,
+        contentItems,
+      });
+      if (autoBlocks.length > 0) {
+        body.blocks = autoBlocks;
+        dataPayload.selected_content_items = autoBlocks;
       }
-      mutate();
-      setShowAiModal(false);
-      setAiPrompt('');
-    } catch {
-      // TODO: toast
+
+      // Step 5: Create proposal via API
+      const result = await apiPost('/api/proposales/proposals', body);
+
+      // Handle multiple possible response shapes from Proposales API
+      const newUuid =
+        result?.proposal?.uuid ??
+        result?.data?.uuid ??
+        result?.uuid;
+
+      if (newUuid) {
+        setShowAiModal(false);
+        setAiPrompt('');
+        await mutate();
+        router.push(`/dashboard/proposals/${newUuid}`);
+      } else {
+        // Proposal created but UUID not found in response — refresh list
+        await mutate();
+        setShowAiModal(false);
+        setAiPrompt('');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to create proposal';
+      setAiError(msg);
+      console.error('[AI Create] Error:', msg);
     } finally {
       setAiCreating(false);
     }
@@ -463,11 +629,11 @@ export default function ProposalsPage() {
                 Table
               </button>
             </div>
-            <Button variant="secondary" onClick={() => setShowAiModal(true)}>
+            <Button variant="secondary" onClick={() => { setAiError(null); setShowAiModal(true); }}>
               ✨ AI Create
             </Button>
             <Button onClick={() => router.push('/dashboard/proposals/new')}>
-              + Manual Create
+              Form
             </Button>
           </div>
         }
@@ -712,13 +878,56 @@ export default function ProposalsPage() {
         <div className="px-6 py-4 space-y-4">
           <p className="text-xs text-gray-500">Describe your event in plain text and AI will create a complete proposal draft instantly.</p>
 
+          <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+            <p className="text-[11px] font-semibold text-indigo-700 mb-1">Example (copy and use)</p>
+            <p className="text-xs text-indigo-900 break-words">{AI_QUICK_CREATE_EXAMPLE}</p>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                className="rounded-md bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                onClick={() => setAiPrompt(AI_QUICK_CREATE_EXAMPLE)}
+              >
+                Use Example
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(AI_QUICK_CREATE_EXAMPLE);
+                }}
+              >
+                Copy
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-indigo-900 break-words">{AI_QUICK_CREATE_WEDDING_EXAMPLE}</p>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                className="rounded-md bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                onClick={() => setAiPrompt(AI_QUICK_CREATE_WEDDING_EXAMPLE)}
+              >
+                Use Wedding Example
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(AI_QUICK_CREATE_WEDDING_EXAMPLE);
+                }}
+              >
+                Copy Wedding
+              </button>
+            </div>
+          </div>
+
           <div>
             <textarea
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
               rows={4}
               autoFocus
-              placeholder="e.g. Conference for 120 guests on April 15 at Grand Ballroom, full day with lunch and AV equipment. Contact: John Doe, john@acme.com, Acme Inc."
+              placeholder={AI_QUICK_CREATE_EXAMPLE}
               className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm leading-relaxed focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/20 resize-none"
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && aiPrompt.trim()) {
@@ -728,6 +937,12 @@ export default function ProposalsPage() {
             />
             <p className="text-[10px] text-gray-400 mt-1.5">Include event type, date, guest count, venue, contact info, and any special requirements. Press Ctrl+Enter to create.</p>
           </div>
+
+          {aiError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-xs font-medium text-red-700">{aiError}</p>
+            </div>
+          )}
 
           {aiCreating && (
             <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 flex items-center gap-2">
@@ -780,12 +995,12 @@ function ProposalStatusStepper({ proposal, compact }: { proposal: Record<string,
   const currentStep = getStepIndex(proposal);
   const status = (proposal.status as string) || 'draft';
 
-  // For rejected/expired, show a special indicator
-  if (status === 'rejected') {
+  // For rejected/lost/expired, show a special indicator
+  if (status === 'rejected' || status === 'lost') {
     return (
       <div className="flex items-center gap-1">
         <span className="h-2 w-2 rounded-full bg-red-500" />
-        <span className="text-[10px] font-medium text-red-600">Rejected</span>
+        <span className="text-[10px] font-medium text-red-600">{status === 'lost' ? 'Lost' : 'Rejected'}</span>
       </div>
     );
   }

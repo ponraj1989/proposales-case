@@ -166,14 +166,13 @@ export function createAcceptProposalTool(
       let total = 0;
 
       if (sdk) {
+        // Step 1: Create the proposal — failure here is fatal
         try {
-          // Create the actual proposal in Proposales
-          const apiResult = await sdk.proposals.create({
+          const createPayload = {
             company_id: di.company_id,
             language: di.language || 'en',
             title_md: di.title,
             description_md: di.description,
-            creator_email: userInfo?.email,
             contact_email: recipientEmail,
             recipient: {
               first_name: firstName,
@@ -196,12 +195,33 @@ export function createAcceptProposalTool(
             background_image: di.background_image || undefined,
             background_video: di.background_video || undefined,
             attachments: di.attachments || undefined,
-          });
-
+          };
+          console.log('[acceptProposal] Creating proposal with payload:', JSON.stringify(createPayload, null, 2));
+          const apiResult = await sdk.proposals.create(createPayload);
           proposalUuid = apiResult?.proposal?.uuid ?? null;
+          console.log('[acceptProposal] Proposal created, uuid:', proposalUuid);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const errBody = (err as { body?: unknown }).body;
+          const errStatus = (err as { status?: number }).status;
+          console.error('[acceptProposal] Failed to create proposal:', { message: errMsg, status: errStatus, body: errBody });
+          return {
+            type: 'proposal_status' as const,
+            proposal: {
+              title: di.title,
+              totalAmount: 0,
+              currency: input.currency,
+              status: 'error',
+              proposalUuid: null,
+              proposalUrl: null,
+            },
+            message: `Something went wrong creating the proposal. Please try again.`,
+          };
+        }
 
-          // Fetch the created proposal to get real prices
-          if (proposalUuid) {
+        // Step 2: Fetch the created proposal to get real prices — failure here is non-fatal
+        if (proposalUuid) {
+          try {
             const fetchedResult = await sdk.proposals.get(proposalUuid);
             const fetched: Proposal = fetchedResult.data;
             proposalUrl = fetched.pdf_url ?? null;
@@ -227,21 +247,10 @@ export function createAcceptProposalTool(
             subtotal = valueWithoutTax / 100;
             tax = Math.round(valueWithTax - valueWithoutTax) / 100;
             total = valueWithTax / 100;
+          } catch (err) {
+            console.warn('[acceptProposal] Proposal created but fetch failed (uuid still valid):', err instanceof Error ? err.message : String(err));
+            // Non-fatal: the proposal exists, we just couldn't fetch detailed pricing
           }
-        } catch (err) {
-          console.error('Failed to create proposal via API:', err instanceof Error ? err.message : String(err));
-          return {
-            type: 'proposal_status' as const,
-            proposal: {
-              title: di.title,
-              totalAmount: 0,
-              currency: input.currency,
-              status: 'error',
-              proposalUuid: null,
-              proposalUrl: null,
-            },
-            message: `Something went wrong creating the proposal. Please try again.`,
-          };
         }
       }
 

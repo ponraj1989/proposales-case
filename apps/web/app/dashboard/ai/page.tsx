@@ -52,6 +52,10 @@ interface ProposalDraft {
   proposalUrl?: string | null;
 }
 
+function getDraftAcceptanceKey(draft: Pick<ProposalDraft, 'title' | 'recipient'>): string {
+  return `${draft.title}::${draft.recipient.email.trim().toLowerCase()}`;
+}
+
 interface StoredConversation {
   id: string;
   title: string;
@@ -322,6 +326,40 @@ export default function AIAssistantPage() {
   });
 
   const isLoading = status === 'streaming' || status === 'submitted';
+
+  const acceptedDraftKeys = useMemo(() => {
+    const keys = new Set<string>();
+
+    for (const message of messages) {
+      if (!Array.isArray(message.parts)) continue;
+
+      for (const part of message.parts) {
+        if ((part as { type?: string }).type !== 'tool-acceptProposal') continue;
+
+        const toolPart = part as unknown as ToolPart;
+        if (toolPart.state !== 'output-available' || !toolPart.output || typeof toolPart.output !== 'object') {
+          continue;
+        }
+
+        const output = toolPart.output as {
+          type?: string;
+          proposal?: { title?: string; proposalUuid?: string | null; status?: string };
+          recipient?: { email?: string };
+        };
+
+        if (output.type !== 'proposal_status') continue;
+        if (!output.proposal?.proposalUuid || output.proposal?.status === 'error') continue;
+
+        const title = output.proposal.title?.trim();
+        const email = output.recipient?.email?.trim().toLowerCase();
+        if (!title || !email) continue;
+
+        keys.add(`${title}::${email}`);
+      }
+    }
+
+    return keys;
+  }, [messages]);
 
   const createConversationOnServer = useCallback(async (title = 'New Chat') => {
     const response = await fetch('/api/ai/conversations', {
@@ -774,7 +812,7 @@ export default function AIAssistantPage() {
 
         {/* Messages or Form */}
         {chatMode === 'form' && !isSales ? (
-          <EventBookingForm onSubmit={handleFormSubmit} isLoading={isLoading} />
+          <EventBookingForm onSubmit={handleFormSubmit} isLoading={isLoading} userData={userData} />
         ) : (
           <>
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
@@ -790,6 +828,7 @@ export default function AIAssistantPage() {
                     onReject={handleReject}
                     onNegotiate={handleNegotiate}
                     onSendStructuredInput={(textPayload) => sendMessage({ text: textPayload })}
+                    acceptedDraftKeys={acceptedDraftKeys}
                     isLoading={isLoading}
                   />
                 </div>
@@ -1004,9 +1043,11 @@ interface AvailabilityResult {
 function EventBookingForm({
   onSubmit,
   isLoading,
+  userData,
 }: {
   onSubmit: (data: EventFormData) => void;
   isLoading: boolean;
+  userData?: { name: string | null; email: string | null } | undefined;
 }) {
   const [form, setForm] = useState<EventFormData>({
     eventType: '',
@@ -1067,6 +1108,17 @@ function EventBookingForm({
   // ─── Live Availability State ───
   const [availability, setAvailability] = useState<AvailabilityResult[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
+
+  // Populate name and email from login data on mount
+  useEffect(() => {
+    if (userData?.name || userData?.email) {
+      setForm((prev) => ({
+        ...prev,
+        name: userData.name || '',
+        email: userData.email || '',
+      }));
+    }
+  }, [userData?.name, userData?.email]);
 
   // Fetch content catalog on mount
   useEffect(() => {
@@ -1172,7 +1224,26 @@ function EventBookingForm({
         return { ...prev, selectedItems: prev.selectedItems.filter((si) => si.variation_id !== item.variation_id) };
       }
       const guests = parseInt(prev.guests) || 1;
-      const defaultQty = item.unit_type === 'person' ? guests : 1;
+      let defaultQty = 1;
+      
+      // Calculate quantity based on item type and guest count
+      if (item.unit_type === 'person') {
+        defaultQty = guests;
+      } else {
+        // Handle accommodation items (rooms)
+        const itemTitle = item.title.toLowerCase();
+        if (itemTitle.includes('double room') || itemTitle.includes('double')) {
+          // Double room accommodates 2 guests
+          defaultQty = Math.ceil(guests / 2);
+        } else if (itemTitle.includes('single room') || itemTitle.includes('single')) {
+          // Single room accommodates 1 guest
+          defaultQty = guests;
+        } else if (itemTitle.includes('suite')) {
+          // Suite accommodates multiple guests, estimate 4 per suite
+          defaultQty = Math.ceil(guests / 4);
+        }
+      }
+      
       return { ...prev, selectedItems: [...prev.selectedItems, { ...item, quantity: defaultQty }] };
     });
   };
@@ -1644,30 +1715,6 @@ function EventBookingForm({
           )}
         </div>
 
-        {/* Contact details */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Your Name</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => update('name', e.target.value)}
-              placeholder="John Doe"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gray-700"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Your Email</label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => update('email', e.target.value)}
-              placeholder="john@example.com"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gray-700"
-            />
-          </div>
-        </div>
-
         {/* Notes */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Additional Notes</label>
@@ -1882,6 +1929,7 @@ function ChatMessage({
   onReject,
   onNegotiate,
   onSendStructuredInput,
+  acceptedDraftKeys,
   isLoading,
 }: {
   message: UIMessage;
@@ -1889,6 +1937,7 @@ function ChatMessage({
   onReject: () => void;
   onNegotiate: (draft: ProposalDraft) => void;
   onSendStructuredInput: (textPayload: string) => void;
+  acceptedDraftKeys: Set<string>;
   isLoading: boolean;
 }) {
   const rawText = getMessageText(message);
@@ -2025,6 +2074,7 @@ function ChatMessage({
             draft={draft}
             onAccept={onAccept}
             onReject={onReject}
+            isAccepted={acceptedDraftKeys.has(getDraftAcceptanceKey(draft))}
             isLoading={isLoading}
           />
         ))}
@@ -2238,15 +2288,17 @@ function ProposalCard({
   draft,
   onAccept,
   onReject,
+  isAccepted,
   isLoading,
 }: {
   draft: ProposalDraft;
   onAccept: (esignUrl?: string | null) => void;
   onReject: () => void;
+  isAccepted: boolean;
   isLoading: boolean;
 }) {
-  const [actionTaken, setActionTaken] = useState<'accepted' | 'rejected' | null>(null);
-  const buttonsDisabled = actionTaken !== null || isLoading;
+  const [actionTaken, setActionTaken] = useState<'rejected' | null>(null);
+  const buttonsDisabled = actionTaken === 'rejected' || isLoading || isAccepted;
 
   const hasPrices = draft.items.some((i) => i.unit_price != null && !isNaN(i.unit_price));
   const fmt = (n: number) =>
@@ -2394,7 +2446,7 @@ function ProposalCard({
 
       {/* Actions */}
       <div className="border-t border-gray-200 px-5 py-4 flex gap-3">
-        {actionTaken === 'accepted' ? (
+        {isAccepted ? (
           <div className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-green-100 px-4 py-2.5 text-sm font-semibold text-green-700">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
@@ -2411,14 +2463,14 @@ function ProposalCard({
         ) : (
           <>
             <button
-              onClick={() => { setActionTaken('accepted'); onAccept(draft.proposalUrl ?? null); }}
+              onClick={() => { onAccept(draft.proposalUrl ?? null); }}
               disabled={buttonsDisabled}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
-              Accept &amp; Generate Proposal
+              {isLoading ? 'Generating Proposal...' : 'Accept & Generate Proposal'}
             </button>
             <button
               onClick={() => { setActionTaken('rejected'); onReject(); }}

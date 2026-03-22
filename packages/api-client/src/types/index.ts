@@ -118,6 +118,7 @@ export type ProposalStatus =
   | 'expired'
   | 'accepted'
   | 'rejected'
+  | 'lost'
   | 'withdrawn'
   | 'replaced'
   | null;

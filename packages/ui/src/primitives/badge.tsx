@@ -40,6 +40,7 @@ export function StatusBadge({ status }: { status: string | null }) {
     accepted: { variant: 'success', label: 'E-signed' },
     signed: { variant: 'success', label: 'E-signed' },
     rejected: { variant: 'error', label: 'Rejected' },
+    lost: { variant: 'error', label: 'Lost' },
     withdrawn: { variant: 'default', label: 'Withdrawn' },
     replaced: { variant: 'default', label: 'Replaced' },
   };

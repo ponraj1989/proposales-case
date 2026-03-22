@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withAuth } from '@/lib/api-utils';
 import { getSDK } from '@/lib/sdk';
-import { patchProposalDataSchema, updateProposalSchema } from '@proposales/api-client';
+import { patchProposalDataSchema } from '@proposales/api-client';
 
 // GET /api/proposales/proposals/[uuid]
 export async function GET(
@@ -41,34 +41,6 @@ export async function PATCH(
 
       const sdk = getSDK();
       const result = await sdk.proposals.patchData(uuid, parsed.data);
-      return NextResponse.json(result);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to update proposal';
-      return NextResponse.json({ error: { message } }, { status: 500 });
-    }
-  });
-}
-
-// PUT /api/proposales/proposals/[uuid] — update top-level proposal fields
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ uuid: string }> },
-) {
-  return withAuth(async () => {
-    try {
-      const { uuid } = await params;
-      const body = await request.json();
-      const parsed = updateProposalSchema.safeParse(body);
-
-      if (!parsed.success) {
-        return NextResponse.json(
-          { error: { message: 'Invalid request body', details: parsed.error.flatten() } },
-          { status: 400 },
-        );
-      }
-
-      const sdk = getSDK();
-      const result = await sdk.proposals.update(uuid, parsed.data);
       return NextResponse.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to update proposal';

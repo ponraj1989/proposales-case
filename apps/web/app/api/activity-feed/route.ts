@@ -33,8 +33,9 @@ async function refreshFromProposals() {
 
   try {
     const sdk = getSDK();
-    const searchResult = await sdk.proposals.search(undefined, 30);
-    const items = Array.isArray(searchResult.data) ? searchResult.data : searchResult.data ? [searchResult.data] : [];
+    const items = (await sdk.proposals.searchAll())
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, 100);
 
     for (const item of items) {
       const uuid = (item as { uuid?: string }).uuid;
@@ -49,6 +50,7 @@ async function refreshFromProposals() {
         const amount = totalCents > 0 ? totalCents / 100 : undefined;
         const currency = p.currency || 'EUR';
         const tracking = p.tracking;
+        const statusChangedAt = p.status_changed_at ? new Date(p.status_changed_at * 1000).toISOString() : undefined;
 
         // "created" event
         const createdAt = (item as unknown as Record<string, unknown>).created_at;
@@ -108,6 +110,22 @@ async function refreshFromProposals() {
             amount,
             currency,
             time: new Date(tracking.accepted_at).toISOString(),
+          });
+        }
+
+        if (tracking?.rejected_at || p.status === 'rejected') {
+          await pushIfNew(redis, `${uuid}:rejected`, {
+            type: 'rejected',
+            title: 'Proposal Rejected',
+            description: `${contact} rejected "${title}"${amount ? ` — €${amount.toLocaleString('en-IE', { minimumFractionDigits: 2 })}` : ''}`,
+            proposalUuid: uuid,
+            proposalTitle: title,
+            recipientName: contact,
+            amount,
+            currency,
+            time: tracking?.rejected_at
+              ? new Date(tracking.rejected_at).toISOString()
+              : (statusChangedAt || new Date((item.updated_at as number) * 1000).toISOString()),
           });
         }
 
