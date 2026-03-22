@@ -290,6 +290,7 @@ export default function AIAssistantPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [input, setInput] = useState('');
   const [chatMode, setChatMode] = useState<'conversation' | 'form'>('conversation');
+  const [streamStalled, setStreamStalled] = useState(false);
   const [language] = useState(() => {
     if (typeof window !== 'undefined') {
       const browserLang = navigator.language?.split('-')[0];
@@ -313,6 +314,7 @@ export default function AIAssistantPage() {
     sendMessage,
     status,
     setMessages,
+    stop,
   } = useChat({
     id: activeConvId,
     transport: new DefaultChatTransport({
@@ -320,12 +322,33 @@ export default function AIAssistantPage() {
       body: { conversationId: activeConvId, language },
     }),
     messages: activeConversation?.messages ?? [],
+    onError() {
+      setStreamStalled(true);
+    },
     onFinish() {
+      setStreamStalled(false);
       // no-op: source of truth is server conversation state
     },
   });
 
   const isLoading = status === 'streaming' || status === 'submitted';
+
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    clearTimeout(streamTimeoutRef.current);
+
+    if (isLoading) {
+      setStreamStalled(false);
+      streamTimeoutRef.current = setTimeout(() => {
+        stop();
+        setStreamStalled(true);
+      }, 45_000);
+    } else {
+      setStreamStalled(false);
+    }
+
+    return () => clearTimeout(streamTimeoutRef.current);
+  }, [isLoading, stop]);
 
   const acceptedDraftKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -895,6 +918,11 @@ export default function AIAssistantPage() {
               <p className="mt-2 text-center text-[0.65rem] text-gray-400">
                 AI can make mistakes. Always double-check proposals before sending — even robots need a proofreader! 🤖
               </p>
+              {streamStalled && (
+                <p className="mt-1 text-center text-[0.7rem] text-amber-600">
+                  Response timed out. Please send again to continue.
+                </p>
+              )}
             </div>
           </>
         )}
