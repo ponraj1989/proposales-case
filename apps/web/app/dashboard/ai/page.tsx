@@ -582,42 +582,59 @@ export default function AIAssistantPage() {
   }, [sendMessage]);
 
   const handleFormSubmit = useCallback((formData: EventFormData) => {
-    const parts: string[] = [];
-    parts.push(`I'd like to book a ${formData.eventType}`);
-    if (formData.selectedSpace) {
-      parts.push(`at ${formData.selectedSpace.space_name} (${formData.selectedSpace.space_type}, ${formData.selectedSpace.time_slot}, capacity ${formData.selectedSpace.capacity}, space_id: ${formData.selectedSpace.space_id})`);
-    } else if (formData.venue) {
-      parts.push(`at the ${formData.venue}`);
-    }
-    parts.push(`on ${formData.date}`);
-    if (formData.time) parts.push(`(${formData.time})`);
-    parts.push(`for ${formData.guests} guests`);
-    if (formData.setupType) parts.push(`with ${formData.setupType} setup`);
-    if (formData.budget) parts.push(`and a budget of €${formData.budget}`);
+    const normalizedGuests = Number.parseInt(formData.guests || '0', 10);
+    const selectedItems = formData.selectedItems.map((item) => ({
+      variation_id: item.variation_id,
+      title: item.title,
+      quantity: item.quantity,
+      unit_type: item.unit_type,
+      price_cents: item.price_cents,
+    }));
 
-    // Include specifically selected items with variation_ids and quantities
-    if (formData.selectedItems.length > 0) {
-      const itemLines = formData.selectedItems.map((si) =>
-        `- ${si.title} (variation_id: ${si.variation_id}, qty: ${si.quantity}, €${(si.price_cents / 100).toFixed(0)}/${si.unit_type})`,
-      );
-      parts.push(`.\n\nSelected items for the proposal:\n${itemLines.join('\n')}`);
-    } else {
-      // Fallback to generic add-on names
-      const extras: string[] = [];
-      if (formData.catering) extras.push('catering/food service');
-      if (formData.av) extras.push('AV equipment (projector, sound system)');
-      if (formData.accommodation) extras.push('overnight accommodation for guests');
-      if (formData.decoration) extras.push('venue decoration');
-      if (formData.transportation) extras.push('transportation');
-      if (extras.length > 0) parts.push(`. I'll also need ${extras.join(', ')}`);
-    }
+    const extras: string[] = [];
+    if (formData.catering) extras.push('catering/food service');
+    if (formData.av) extras.push('AV equipment (projector, sound system)');
+    if (formData.accommodation) extras.push('overnight accommodation for guests');
+    if (formData.decoration) extras.push('venue decoration');
+    if (formData.transportation) extras.push('transportation');
 
-    if (formData.name) parts.push(`. My name is ${formData.name}`);
-    if (formData.email) parts.push(`and my email is ${formData.email}`);
-    if (formData.notes) parts.push(`. Additional notes: ${formData.notes}`);
+    const submission = {
+      event_type: formData.eventType,
+      event_date: formData.date,
+      guests: Number.isFinite(normalizedGuests) ? normalizedGuests : formData.guests,
+      time_slot: formData.time || undefined,
+      venue_type: formData.venue || undefined,
+      setup_type: formData.setupType || undefined,
+      budget_eur: formData.budget ? Number.parseFloat(formData.budget) : undefined,
+      notes: formData.notes || undefined,
+      contact_name: formData.name || undefined,
+      contact_email: formData.email || undefined,
+      selected_space: formData.selectedSpace
+        ? {
+          space_id: formData.selectedSpace.space_id,
+          space_name: formData.selectedSpace.space_name,
+          space_type: formData.selectedSpace.space_type,
+          time_slot_id: formData.selectedSpace.time_slot_id,
+          time_slot: formData.selectedSpace.time_slot,
+          capacity: formData.selectedSpace.capacity,
+        }
+        : undefined,
+      selected_items: selectedItems.length > 0 ? selectedItems : undefined,
+      requested_extras: selectedItems.length === 0 && extras.length > 0 ? extras : undefined,
+    };
 
-    const message = parts.join(' ') + '.';
-    sendMessage({ text: message });
+    const instructions = [
+      '[FORM_SUBMISSION]',
+      'The booking form is already completed with event type, date, and guests.',
+      'Do NOT call requestUserInput again.',
+      formData.selectedSpace
+        ? 'Use selected_space directly. Only call checkAvailability if you need to validate or suggest alternatives.'
+        : 'Call checkAvailability next and suggest best-fit spaces.',
+      'Then generateProposalDraft using selected_items (variation_id + quantity) when provided.',
+      `FORM_DATA: ${JSON.stringify(submission)}`,
+    ];
+
+    sendMessage({ text: instructions.join('\n') });
     setChatMode('conversation');
   }, [sendMessage]);
 
@@ -2047,21 +2064,25 @@ function ChatMessage({
 
     if (part.type === 'dynamic-tool') {
       // Flat structure: { type, toolName, toolCallId, state, output }
-      toolParts.push(part as unknown as ToolPart);
-    } else if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
-      // Named tool: { type: 'tool-<name>', toolCallId, state, output }
-      toolParts.push(part as unknown as ToolPart);
+      const p = part as unknown as ToolPart;
+      toolParts.push({ ...p, state: p.state === 'result' ? 'output-available' : p.state });
     } else if (part.type === 'tool-invocation' && 'toolInvocation' in part) {
-      // Nested structure: { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, state, result } }
+      // Nested structure from useChat: { type: 'tool-invocation', toolInvocation: { toolName, state: 'result', result } }
+      // ⚠️ Must come BEFORE the startsWith('tool-') check below — 'tool-invocation' also starts with 'tool-'
       const inv = (part as any).toolInvocation;
       toolParts.push({
-        type: String(part.type),
+        type: 'tool-invocation',
         toolName: inv.toolName ?? '',
         toolCallId: inv.toolCallId ?? '',
-        state: inv.state === 'result' ? 'output-available' : inv.state,
+        state: inv.state === 'result' ? 'output-available' : (inv.state ?? 'call'),
         input: inv.args,
         output: inv.result,
       });
+    } else if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
+      // Flat tool parts from saved messages: { type: 'tool-invocation', toolName, state: 'result', output }
+      // Map 'result' → 'output-available' so the Thinking indicator hides correctly
+      const p = part as unknown as ToolPart;
+      toolParts.push({ ...p, state: p.state === 'result' ? 'output-available' : p.state });
     }
   }
 

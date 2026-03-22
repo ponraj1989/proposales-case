@@ -568,7 +568,7 @@ export async function bookSpace(request: BookingRequest): Promise<BookingResult>
       booked: true,
       bookingRef: `BK-${Date.now().toString(36).toUpperCase()}-${request.space_id.slice(-4).toUpperCase()}`,
     },
-    { new: true },
+    { returnDocument: 'after' },
   );
 
   if (!result) {
