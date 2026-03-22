@@ -30,6 +30,7 @@ flowchart LR
 - **Server-owned conversations**: Chat state is persisted in Redis and hydrated from server on load.
 - **Tool-driven AI**: Chat invokes strongly-typed tools; proposal negotiation updates the same proposal via PATCH and then re-reads from API.
 - **Direct e-sign URL usage**: eSign is always sourced from `proposal.pdf_url` returned by Proposales.
+- **Status-sharded proposal retrieval**: Because upstream proposal search is capped at 25 per request with no dependable pagination, proposal listing aggregates multiple status queries and deduplicates by UUID.
 
 ---
 
@@ -175,7 +176,7 @@ sequenceDiagram
 | `/api/proposales/companies/[companyId]/templates` | GET | List templates for company | Proposales SDK/API | Validates `companyId` |
 | `/api/proposales/content` | GET, POST, PUT, DELETE | Content CRUD + bulk archive/restore | Proposales SDK/API | Supports `action=bulk|restore` |
 | `/api/proposales/inbox/[token]` | POST | Create RFP via inbox token | Proposales SDK/API | Public webhook-like intake |
-| `/api/proposales/proposals` | GET, POST | Search proposals / create proposal | Proposales SDK/API | Supports filter query params |
+| `/api/proposales/proposals` | GET, POST | Search proposals / create proposal | Proposales SDK/API | GET uses status fan-out + UUID dedupe to work around 25-result search cap |
 | `/api/proposales/proposals/[uuid]` | GET, PATCH, PUT | Get proposal / patch proposal data | Proposales SDK/API | PATCH/PUT for data updates |
 | `/api/webhooks/proposales` | POST | Handle proposal lifecycle webhooks | Proposales SDK/API, MongoDB, PMS DB | No auth, event-driven side effects |
 
@@ -197,3 +198,4 @@ sequenceDiagram
 - Debounced conversation sync reduces write amplification during streaming responses.
 - Negotiation modifies the same proposal UUID through PATCH and then reads fresh state from endpoint.
 - Next.js currently warns that `middleware.ts` convention is deprecated in favor of `proxy` naming.
+- Proposal search aggregation improves coverage beyond 25 items, but still has a known edge case: if any single status has more than 25 records, results for that status may still be incomplete without a future upstream pagination or time-window strategy.
