@@ -203,6 +203,8 @@ export function useMyProposals() {
   return useSWR<{ data: MyProposal[] }>('/api/my-proposals', fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 10000,
+    // 60-second fallback poll in case the SSE stream is unavailable
+    refreshInterval: 60000,
   });
 }
 

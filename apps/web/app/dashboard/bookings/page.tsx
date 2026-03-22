@@ -65,12 +65,38 @@ export default function BookingsPage() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const proposals: MyProposal[] = data?.data ?? [];
 
-  // Auto-refresh every 20 seconds
+  // Live SSE updates — refresh the list whenever the server pushes a proposal status change.
+  // Falls back to the SWR refreshInterval (60 s) if the SSE connection drops.
   useEffect(() => {
-    const interval = setInterval(() => {
-      mutate();
-    }, 20000);
-    return () => clearInterval(interval);
+    let stream: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+      stream = new EventSource('/api/my-proposals/stream');
+
+      stream.addEventListener('proposal-update', () => {
+        void mutate();
+        setLastRefreshed(new Date());
+      });
+
+      stream.onerror = () => {
+        stream?.close();
+        stream = null;
+        if (!cancelled) {
+          reconnectTimer = setTimeout(connect, 5000);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      stream?.close();
+    };
   }, [mutate]);
 
   const handleRefresh = async () => {
