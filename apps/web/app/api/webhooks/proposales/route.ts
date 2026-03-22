@@ -4,6 +4,8 @@ import { getSDK } from '@/lib/sdk';
 import { pushActivityFeedEvent } from '@/lib/activity-feed';
 import connectDB from '@/lib/mongodb';
 import { UserProposal } from '@/lib/models';
+import { getRedis } from '@/lib/redis';
+import { MY_PROPOSALS_CHANNEL_PREFIX } from '@/app/api/my-proposals/stream/route';
 
 /**
  * POST /api/webhooks/proposales — Handle Proposales status updates
@@ -22,6 +24,7 @@ export async function POST(request: Request) {
     // Fetch actual proposal data for rich activity feed entries
     let proposalTitle: string | undefined;
     let recipientName: string | undefined;
+    let recipientEmail: string | undefined;
     let amount: number | undefined;
     let currency: string | undefined;
 
@@ -33,6 +36,7 @@ export async function POST(request: Request) {
         if (proposal) {
           proposalTitle = proposal.title_md || proposal.title || undefined;
           recipientName = proposal.recipient_name || proposal.contact_name || actor;
+          recipientEmail = proposal.recipient_email || proposal.contact_email || undefined;
           const totalCents = proposal.value_with_tax ?? proposal.value_without_tax ?? 0;
           if (totalCents > 0) {
             amount = totalCents / 100;
@@ -155,6 +159,19 @@ export async function POST(request: Request) {
             { proposalUuid: uuid },
             { $set: updateFields },
           );
+
+          // Push real-time update to guest user's SSE stream
+          if (recipientEmail) {
+            const redis = getRedis();
+            if (redis) {
+              const channel = `${MY_PROPOSALS_CHANNEL_PREFIX}${recipientEmail.toLowerCase()}`;
+              await redis
+                .publish(channel, JSON.stringify({ proposalUuid: uuid, status: newStatus, time: new Date().toISOString() }))
+                .catch(() => {
+                  // best-effort — don't fail the webhook
+                });
+            }
+          }
         }
       } catch (err) {
         console.error('[Webhook] Failed to update UserProposal:', err instanceof Error ? err.message : String(err));
