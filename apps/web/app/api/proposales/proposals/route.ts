@@ -3,16 +3,13 @@ import { withAuth } from '@/lib/api-utils';
 import { getSDK } from '@/lib/sdk';
 import { createProposalSchema, patchProposalDataSchema } from '@proposales/api-client';
 
-const PROPOSAL_STATUSES = [
+const VISIBLE_PROPOSAL_STATUSES = [
   'draft',
-  'template',
   'active',
   'accepted',
   'rejected',
   'lost',
   'expired',
-  'withdrawn',
-  'replaced',
 ] as const;
 
 // POST /api/proposales/proposals — Create proposal
@@ -64,39 +61,23 @@ export async function GET(request: Request) {
       if (text && !filters.text) filters.text = text;
 
       const sdk = getSDK();
-      // The upstream API caps search results to a small page size. If the caller
-      // did not request a specific status, aggregate all statuses and dedupe by UUID.
+      // The upstream API caps search results to a small page size.
+      // We rely on sdk.proposals.searchAll() fan-out + dedupe, then apply local status filtering.
       const requestedStatus = filters.status;
       let items: Record<string, unknown>[] = [];
 
+      const matchesStatus = (item: Record<string, unknown>, expectedStatus: string) =>
+        typeof item.status === 'string' && item.status === expectedStatus;
+
       if (requestedStatus) {
         const rawItems = await sdk.proposals.searchAll(filters);
-        items = rawItems as unknown as Record<string, unknown>[];
+        items = (rawItems as unknown as Record<string, unknown>[])
+          .filter((item) => matchesStatus(item, requestedStatus));
       } else {
-        const resultsByStatus = await Promise.all(
-          PROPOSAL_STATUSES.map(async (status) => {
-            try {
-              const rawItems = await sdk.proposals.searchAll({
-                ...filters,
-                status,
-              });
-              return rawItems as unknown as Record<string, unknown>[];
-            } catch {
-              return [] as Record<string, unknown>[];
-            }
-          }),
-        );
-
-        const deduped = new Map<string, Record<string, unknown>>();
-        for (const batch of resultsByStatus) {
-          for (const item of batch) {
-            const uuid = typeof item.uuid === 'string' ? item.uuid : '';
-            if (!uuid) continue;
-            if (!deduped.has(uuid)) deduped.set(uuid, item);
-          }
-        }
-
-        items = Array.from(deduped.values());
+        const rawItems = await sdk.proposals.searchAll(filters);
+        const visibleStatuses = new Set<string>(VISIBLE_PROPOSAL_STATUSES);
+        items = (rawItems as unknown as Record<string, unknown>[])
+          .filter((item) => typeof item.status === 'string' && visibleStatuses.has(item.status));
       }
 
       // Enrich proposals with full details in batches of 10

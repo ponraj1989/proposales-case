@@ -6,6 +6,11 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Proposales Platform',
   description: 'Professional proposal management powered by Proposales',
+  icons: {
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
+    apple: '/icon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

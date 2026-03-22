@@ -13,6 +13,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   signed: { label: 'E-Signed', color: 'bg-green-100 text-green-700' },
   rejected: { label: 'Rejected', color: 'bg-red-100 text-red-600' },
   expired: { label: 'Expired', color: 'bg-gray-100 text-gray-500' },
+  withdrawn: { label: 'Withdrawn', color: 'bg-gray-100 text-gray-600' },
 };
 
 const STATUS_STEPS = ['draft', 'sent', 'viewed', 'signed'] as const;
@@ -27,7 +28,7 @@ function normalizeProgressStatus(status: string): 'draft' | 'sent' | 'viewed' | 
 function ProposalStatusTracker({ status }: { status: string }) {
   const normalizedStatus = normalizeProgressStatus(status);
   const currentIdx = STATUS_STEPS.indexOf(normalizedStatus);
-  const isTerminal = status === 'rejected' || status === 'expired';
+  const isTerminal = status === 'rejected' || status === 'expired' || status === 'withdrawn';
 
   return (
     <div className="flex items-center gap-1 mt-3">
@@ -50,7 +51,7 @@ function ProposalStatusTracker({ status }: { status: string }) {
       {isTerminal && (
         <div className="ml-2">
           <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'}`}>
-            {status === 'rejected' ? 'Rejected' : 'Expired'}
+            {status === 'rejected' ? 'Rejected' : status === 'withdrawn' ? 'Withdrawn' : 'Expired'}
           </span>
         </div>
       )}

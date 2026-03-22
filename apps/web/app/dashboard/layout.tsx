@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@proposales/ui';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'next-auth/react';
 import { useUser, useActivityFeed, type ActivityFeedEvent } from '@/lib/hooks';
 
@@ -20,9 +20,24 @@ const EVENT_ICONS: Record<ActivityFeedEvent['type'], { icon: string; color: stri
   updated: { icon: '✏️', color: 'bg-gray-100 text-gray-600' },
 };
 
-function timeAgo(iso: string): string {
-  const timestamp = new Date(iso).getTime();
-  if (Number.isNaN(timestamp)) return 'just now';
+function parseActivityTime(value: unknown): number {
+  if (typeof value === 'number') {
+    return value > 1_000_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === 'string') {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return asNumber > 1_000_000_000_000 ? asNumber : asNumber * 1000;
+    }
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+  return NaN;
+}
+
+function timeAgo(value: unknown): string {
+  const timestamp = parseActivityTime(value);
+  if (Number.isNaN(timestamp)) return '—';
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
   if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);
@@ -70,7 +85,7 @@ const salesNavigation = [
     ),
   },
   {
-    name: 'Analytics',
+    name: 'Insights',
     href: '/dashboard/analytics',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -129,6 +144,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const role = user?.role ?? null;
   const activityEvents = activityData?.data ?? [];
+  const sortedActivityEvents = useMemo(
+    () => [...activityEvents].sort((a, b) => parseActivityTime((b as { time?: unknown }).time) - parseActivityTime((a as { time?: unknown }).time)),
+    [activityEvents],
+  );
   const unreadCount = activityEvents.length;
   const navigation = role === 'sales' ? salesNavigation : customerNavigation;
 
@@ -167,7 +186,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         void mutateActivityRef.current(
           (previous) => {
             const existing = previous?.data ?? [];
-            const next = [parsed, ...existing.filter((entry) => entry.id !== parsed.id)].slice(0, 50);
+            const next = [parsed, ...existing.filter((entry) => entry.id !== parsed.id)]
+              .sort((a, b) => parseActivityTime((b as { time?: unknown }).time) - parseActivityTime((a as { time?: unknown }).time))
+              .slice(0, 50);
             return { data: next };
           },
           { revalidate: false },
@@ -369,7 +390,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     No recent activity yet
                   </div>
                 )}
-                {activityEvents.map((evt, i) => {
+                {sortedActivityEvents.map((evt, i) => {
                   const meta = EVENT_ICONS[evt.type];
                   const fmtAmount = evt.amount
                     ? new Intl.NumberFormat('en-US', { style: 'currency', currency: evt.currency || 'USD' }).format(evt.amount)
@@ -396,7 +417,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           {evt.proposalUuid && (
                             <Link
                               href={`/dashboard/proposals/${evt.proposalUuid}`}
-                              className="text-[0.65rem] font-medium text-blue-500 hover:text-blue-700"
+                              className="text-[0.65rem] font-medium text-gray-700 hover:text-gray-900"
                               onClick={() => setActivityOpen(false)}
                             >
                               View

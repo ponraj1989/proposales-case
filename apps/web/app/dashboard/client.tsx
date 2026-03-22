@@ -248,7 +248,7 @@ export function DashboardClient({
       />
 
       {/* KPI Card */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" style={{ animationDelay: '0ms' }}>
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-500">Total Proposals</p>
@@ -263,15 +263,11 @@ export function DashboardClient({
           </p>
           <p className="mt-1 text-sm text-gray-500">{stats.activeCount} active, {stats.draftCount} drafts</p>
         </div>
-      </div>
 
-      {/* Status Distribution & Recent Proposals */}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="dash-card-enter xl:col-span-1 rounded-card border border-gray-200 bg-white p-6 shadow-card" style={{ animationDelay: '320ms' }}>
+        <div className="dash-card-enter rounded-card border border-gray-200 bg-white p-6 shadow-card" style={{ animationDelay: '120ms' }}>
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">
             Status Distribution
           </h3>
-          {/* Donut overview */}
           <div className="flex items-center justify-center mb-5">
             <div className="relative">
               <MiniDonut
@@ -306,7 +302,7 @@ export function DashboardClient({
                 template: 'bg-gray-500',
               };
               return (
-                <div key={status} className="dash-row-enter" style={{ animationDelay: `${400 + idx * 60}ms` }}>
+                <div key={status} className="dash-row-enter" style={{ animationDelay: `${200 + idx * 50}ms` }}>
                   <div className="flex items-center justify-between text-sm">
                     <span className="capitalize text-gray-700">{status}</span>
                     <span className="font-medium text-gray-900">{count} ({pct}%)</span>
@@ -322,16 +318,17 @@ export function DashboardClient({
             })}
           </div>
         </div>
+      </div>
 
-        {/* Recent Proposals Table */}
-        <div className="xl:col-span-2 dash-card-enter" style={{ animationDelay: '380ms' }}>
+      {/* Recent Proposals Table */}
+      <div className="dash-card-enter" style={{ animationDelay: '220ms' }}>
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
               Recent Proposals
             </h3>
             <button
               onClick={() => router.push('/dashboard/proposals')}
-              className="text-sm font-medium text-gray-700 hover:text-gray-900"
+              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-gray-800"
             >
               View all →
             </button>
@@ -343,7 +340,6 @@ export function DashboardClient({
             onRowClick={(item) => router.push(`/dashboard/proposals/${item.uuid}`)}
             emptyMessage="No proposals yet. Create your first proposal!"
           />
-        </div>
       </div>
     </div>
   );

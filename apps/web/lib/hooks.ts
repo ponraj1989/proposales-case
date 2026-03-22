@@ -35,15 +35,17 @@ export function useUser() {
 export function useProposals(search?: Record<string, string>) {
   const params = new URLSearchParams(search ?? {});
   return useSWR(`/api/proposales/proposals?${params}`, fetcher, {
-    refreshInterval: 30000,
-    revalidateOnFocus: true,
+    refreshInterval: 60000,
+    revalidateOnFocus: false,
+    dedupingInterval: 15000,
   });
 }
 
 export function useProposal(uuid: string) {
   return useSWR(uuid ? `/api/proposales/proposals/${uuid}` : null, fetcher, {
-    refreshInterval: 15000,
-    revalidateOnFocus: true,
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+    dedupingInterval: 10000,
   });
 }
 
@@ -173,9 +175,9 @@ export interface ActivityFeedEvent {
 
 export function useActivityFeed(enabled = true) {
   return useSWR<{ data: ActivityFeedEvent[] }>(enabled ? '/api/activity-feed' : null, fetcher, {
-    revalidateOnFocus: true,
-    refreshInterval: 15000,
-    dedupingInterval: 5000,
+    revalidateOnFocus: false,
+    refreshInterval: 30000,
+    dedupingInterval: 15000,
   });
 }
 
@@ -186,7 +188,7 @@ export interface MyProposal {
   proposalUuid: string;
   proposalTitle: string;
   proposalUrl: string | null;
-  status: 'draft' | 'active' | 'sent' | 'viewed' | 'accepted' | 'signed' | 'rejected' | 'expired';
+  status: 'draft' | 'active' | 'sent' | 'viewed' | 'accepted' | 'signed' | 'rejected' | 'expired' | 'withdrawn';
   totalAmountCents: number;
   currency: string;
   venueType?: string;
@@ -199,7 +201,7 @@ export interface MyProposal {
 
 export function useMyProposals() {
   return useSWR<{ data: MyProposal[] }>('/api/my-proposals', fetcher, {
-    revalidateOnFocus: true,
+    revalidateOnFocus: false,
     dedupingInterval: 10000,
   });
 }

@@ -8,6 +8,7 @@ import { getSDK } from '@/lib/sdk';
 const SEEN_KEY = ACTIVITY_FEED_SEEN_KEY;
 const REFRESH_INTERVAL_MS = 60_000; // re-sync from API at most once per minute
 let lastRefreshedAt = 0;
+let refreshInFlight: Promise<void> | null = null;
 
 /** Push an event only if it hasn't been pushed before (dedup by uuid+type) */
 async function pushIfNew(
@@ -35,7 +36,7 @@ async function refreshFromProposals() {
     const sdk = getSDK();
     const items = (await sdk.proposals.searchAll())
       .sort((a, b) => b.created_at - a.created_at)
-      .slice(0, 100);
+      .slice(0, 30);
 
     for (const item of items) {
       const uuid = (item as { uuid?: string }).uuid;
@@ -149,13 +150,21 @@ async function refreshFromProposals() {
   }
 }
 
+function scheduleRefreshFromProposals() {
+  if (refreshInFlight) return;
+  refreshInFlight = refreshFromProposals().finally(() => {
+    refreshInFlight = null;
+  });
+}
+
 export async function GET() {
   const role = await getUserRole();
   if (!role) {
     return NextResponse.json({ error: { message: 'Authentication required' } }, { status: 401 });
   }
 
-  await refreshFromProposals();
+  // Keep endpoint fast: return cached feed immediately and refresh in background.
+  scheduleRefreshFromProposals();
 
   const events = await listActivityFeed(50);
   return NextResponse.json({ data: events });

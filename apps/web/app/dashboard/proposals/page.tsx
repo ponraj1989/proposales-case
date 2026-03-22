@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   PageHeader,
@@ -207,24 +207,31 @@ export default function ProposalsPage() {
       : [data.data]
     : [];
 
+  const deferredSearchText = useDeferredValue(searchText);
+
   // Client-side status + text filtering
-  const proposals = allProposals.filter((p) => {
-    // Status filter (table mode only — kanban shows all and distributes into columns)
-    if (viewMode === 'table' && statusFilter !== 'all') {
-      const pStatus = (p.status as string) || '';
-      if (pStatus !== statusFilter) return false;
-    }
-    // Text search
-    if (searchText) {
-      const needle = searchText.toLowerCase();
-      const title = ((p.title_md || p.title || '') as string).toLowerCase();
-      const contact = ((p.contact_name || p.recipient_name || '') as string).toLowerCase();
-      const email = ((p.contact_email || p.recipient_email || '') as string).toLowerCase();
-      const uuid = ((p.uuid || '') as string).toLowerCase();
-      if (!title.includes(needle) && !contact.includes(needle) && !email.includes(needle) && !uuid.includes(needle)) return false;
-    }
-    return true;
-  });
+  const proposals = useMemo(() => {
+    const needle = deferredSearchText.trim().toLowerCase();
+
+    return allProposals.filter((proposal) => {
+      if (viewMode === 'table' && statusFilter !== 'all') {
+        const proposalStatus = (proposal.status as string) || '';
+        if (proposalStatus !== statusFilter) return false;
+      }
+
+      if (needle) {
+        const title = ((proposal.title_md || proposal.title || '') as string).toLowerCase();
+        const contact = ((proposal.contact_name || proposal.recipient_name || '') as string).toLowerCase();
+        const email = ((proposal.contact_email || proposal.recipient_email || '') as string).toLowerCase();
+        const uuid = ((proposal.uuid || '') as string).toLowerCase();
+        if (!title.includes(needle) && !contact.includes(needle) && !email.includes(needle) && !uuid.includes(needle)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [allProposals, viewMode, statusFilter, deferredSearchText]);
 
   // Derive the live status from a proposal's tracking data + API status
   function deriveLiveStatus(proposal: Record<string, unknown>): 'draft' | 'active' | 'viewed' | 'accepted' | 'rejected' | 'expired' {
