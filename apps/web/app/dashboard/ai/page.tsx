@@ -772,9 +772,14 @@ export default function AIAssistantPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
               <p className="text-xs text-gray-500">{isSales ? 'Create proposals, analyze pipeline, manage proposals' : 'Events, rooms, prices & good vibes — ask me anything!'}</p>
             </div>
+            {isSales && (
+              <p className="mt-0.5 text-[11px] font-medium text-gray-600">
+                Sales AI can generate proposal drafts and create proposals after your confirmation.
+              </p>
+            )}
           </div>
-          {/* Mode toggle — guest only */}
-          {!isSales && (
+          {/* Mode toggle */}
+          {
             <div className="ml-auto flex items-center gap-2">
               <div className="flex items-center rounded-xl border border-gray-200 bg-gray-50 p-0.5">
               <button
@@ -807,11 +812,11 @@ export default function AIAssistantPage() {
               </button>
               </div>
             </div>
-          )}
+          }
         </div>
 
         {/* Messages or Form */}
-        {chatMode === 'form' && !isSales ? (
+        {chatMode === 'form' ? (
           <EventBookingForm onSubmit={handleFormSubmit} isLoading={isLoading} userData={userData} />
         ) : (
           <>
@@ -925,6 +930,7 @@ interface EventFormData {
 
 const EVENT_TYPES = [
   { value: 'conference', label: 'Conference', icon: '🎤' },
+  { value: 'stay', label: 'Stay', icon: '🛏️' },
   { value: 'wedding', label: 'Wedding', icon: '💍' },
   { value: 'meeting', label: 'Business Meeting', icon: '🤝' },
   { value: 'dinner', label: 'Dinner / Gala', icon: '🍽️' },
@@ -1038,6 +1044,40 @@ interface AvailabilityResult {
   price: string;
   price_cents: number;
   amenities: string[];
+}
+
+function matchesSpaceForEventType(slot: AvailabilityResult, eventType: string): boolean {
+  if (!eventType) return true;
+
+  const normalizedType = eventType.toLowerCase();
+  const normalizedSpaceType = slot.space_type.toLowerCase();
+  const normalizedSpaceName = slot.space_name.toLowerCase();
+
+  if (normalizedType === 'stay') {
+    return ['room', 'suite', 'single', 'deluxe'].some((keyword) => normalizedSpaceName.includes(keyword));
+  }
+
+  if (normalizedType === 'conference' || normalizedType === 'workshop') {
+    return normalizedSpaceType === 'conference' || normalizedSpaceType === 'boardroom';
+  }
+
+  if (normalizedType === 'meeting') {
+    return normalizedSpaceType === 'boardroom' || normalizedSpaceType === 'conference';
+  }
+
+  if (normalizedType === 'wedding') {
+    return normalizedSpaceType === 'banquet' || normalizedSpaceType === 'outdoor';
+  }
+
+  if (normalizedType === 'dinner') {
+    return normalizedSpaceType === 'restaurant' || normalizedSpaceType === 'banquet';
+  }
+
+  if (normalizedType === 'party') {
+    return normalizedSpaceType === 'banquet' || normalizedSpaceType === 'outdoor' || normalizedSpaceType === 'restaurant';
+  }
+
+  return true;
 }
 
 function EventBookingForm({
@@ -1172,6 +1212,30 @@ function EventBookingForm({
       .catch(() => {})
       .finally(() => setAvailabilityLoading(false));
   }, [form.date, form.guests, form.eventType, form.time]);
+
+  const guestCount = useMemo(() => {
+    const parsed = Number.parseInt(form.guests, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }, [form.guests]);
+
+  const fittingAvailability = useMemo(() => {
+    return availability.filter((slot) => {
+      const capacityMatch = guestCount ? slot.capacity >= guestCount : true;
+      const eventTypeMatch = matchesSpaceForEventType(slot, form.eventType);
+      return capacityMatch && eventTypeMatch;
+    });
+  }, [availability, guestCount, form.eventType]);
+
+  // If current selection no longer fits guest count/event type filters, clear it
+  useEffect(() => {
+    if (!form.selectedSpace) return;
+    const selectedStillVisible = fittingAvailability.some(
+      (slot) => slot.space_id === form.selectedSpace?.space_id && slot.time_slot_id === form.selectedSpace?.time_slot_id,
+    );
+    if (!selectedStillVisible) {
+      setForm((prev) => ({ ...prev, selectedSpace: null }));
+    }
+  }, [form.selectedSpace, fittingAvailability]);
 
   // Click a calendar day to set the form date
   const handleCalendarDayClick = (day: CalendarDay) => {
@@ -1483,14 +1547,14 @@ function EventBookingForm({
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-700 border-t-transparent" />
                 <span className="ml-2 text-xs text-gray-500">Checking availability...</span>
               </div>
-            ) : availability.length === 0 ? (
+            ) : fittingAvailability.length === 0 ? (
               <div className="rounded-xl border border-dashed border-red-200 bg-red-50 p-4 text-center">
                 <p className="text-sm font-medium text-red-700">No spaces available</p>
-                <p className="text-xs text-red-500 mt-1">All suitable spaces are booked or held for this date. Try a different date or adjust guest count.</p>
+                <p className="text-xs text-red-500 mt-1">No matching space for event type {form.eventType || 'selected'} with max capacity for {form.guests} guests on this date/time. Try a different date, time, event type, or guest count.</p>
               </div>
             ) : (
               <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                {availability.map((slot, i) => {
+                {fittingAvailability.map((slot, i) => {
                   const isSelected = form.selectedSpace?.space_id === slot.space_id && form.selectedSpace?.time_slot_id === slot.time_slot_id;
                   return (
                     <button
@@ -1518,6 +1582,9 @@ function EventBookingForm({
                         <div>
                           <p className="text-sm font-medium text-gray-800">{slot.space_name}</p>
                           <p className="text-xs text-gray-500">{slot.time_slot} · {slot.capacity} max · {slot.amenities.slice(0, 3).join(', ')}</p>
+                          {guestCount > 0 && (
+                            <p className="text-[11px] text-gray-600">Fits {guestCount} guests · Max {slot.capacity}</p>
+                          )}
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0 ml-3">
@@ -1775,6 +1842,11 @@ function EmptyState({
           ? 'I can visualize your data with charts, analyze pipeline performance, and suggest improvements. To create proposals, head to the Proposals page.'
           : "I'm your friendly hotel concierge — think of me as the person who knows all the best rooms, the tastiest menus, and the secret to a perfect event. Let's make something amazing! ✨"}
       </p>
+      {isSales && (
+        <p className="mb-5 text-xs font-medium text-gray-600">
+          Sales AI can also generate proposal drafts and create proposals after your confirmation.
+        </p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl w-full">
         {suggestions.map((s, i) => (
           <button

@@ -126,6 +126,7 @@ function Navbar() {
         <div className="hidden items-center gap-8 md:flex">
           <a href="#features" className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900">Features</a>
           <a href="#how-it-works" className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900">How It Works</a>
+          <a href="#help" className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900">Help</a>
           <a href="#stats" className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900">Results</a>
         </div>
 
@@ -219,6 +220,15 @@ function HeroSection() {
               See How It Works
               <svg className="h-5 w-5 transition-transform duration-300 group-hover:translate-y-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+            </a>
+            <a
+              href="#help"
+              className="group inline-flex h-14 items-center gap-2 rounded-2xl border border-gray-200/80 bg-white/60 px-8 text-base font-semibold text-gray-700 backdrop-blur-sm transition-all duration-300 hover:border-gray-300 hover:bg-white hover:text-gray-900 hover:-translate-y-1"
+            >
+              Help & Roles
+              <svg className="h-5 w-5 transition-transform duration-300 group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 9a3.75 3.75 0 117.5 0c0 1.216-.667 2.206-1.75 2.919-.87.573-1.75 1.172-1.75 2.331v.75M12 18h.008v.008H12V18z" />
               </svg>
             </a>
           </div>
@@ -511,6 +521,84 @@ function HowItWorksSection() {
   );
 }
 
+/* ─── Help Section ─── */
+function HelpSection() {
+  const { ref, visible } = useReveal();
+
+  return (
+    <section id="help" className="relative bg-gradient-to-b from-white to-gray-50/50 py-32">
+      <div className="mx-auto max-w-7xl px-6 lg:px-8">
+        <div
+          ref={ref}
+          className={`mx-auto max-w-3xl text-center transition-all duration-700 ${
+            visible ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
+          }`}
+        >
+          <span className="text-sm font-bold uppercase tracking-widest text-gray-500">Help</span>
+          <h2 className="mt-3 text-4xl font-extrabold text-gray-900 sm:text-5xl">
+            Roles, Access &{' '}
+            <span className="landing-gradient-text">How to Use</span>
+          </h2>
+          <p className="mt-4 text-lg text-gray-500">
+            Understand what Guest and Sales users can access, what features are available, and the fastest way to get started.
+          </p>
+        </div>
+
+        <div className="mt-14 grid gap-6 lg:grid-cols-2">
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-sm">
+            <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-700">
+              Guest Role
+            </div>
+            <h3 className="text-xl font-bold text-gray-900">For hotel guests and event customers</h3>
+            <ul className="mt-4 space-y-2 text-sm leading-relaxed text-gray-600">
+              <li>• Access only your own proposals and booking-related details.</li>
+              <li>• Use AI concierge for rooms, boardrooms, event venues, and pricing guidance.</li>
+              <li>• Review proposal options, request changes, and continue conversations.</li>
+              <li>• No access to internal sales analytics, pipeline, or other customer data.</li>
+            </ul>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-sm">
+            <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-700">
+              Sales Role
+            </div>
+            <h3 className="text-xl font-bold text-gray-900">For revenue and sales teams</h3>
+            <ul className="mt-4 space-y-2 text-sm leading-relaxed text-gray-600">
+              <li>• Access full proposal pipeline views across stages and statuses.</li>
+              <li>• Use AI chat to generate proposal drafts from event requirements and convert them into live proposals.</li>
+              <li>• Use analytics chat for trends, comparisons, KPIs, and visual dashboards.</li>
+              <li>• Revise pricing/packages with AI and manage proposals from dashboard workflows.</li>
+              <li>• Monitor outcomes and optimize conversion using data insights.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-8 rounded-2xl border border-gray-100 bg-white p-8 shadow-sm">
+          <h3 className="text-xl font-bold text-gray-900">How to use Proposales quickly</h3>
+          <div className="mt-4 grid gap-4 text-sm text-gray-600 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">1. Sign in</p>
+              <p className="mt-1">Log in with your approved account and role.</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">2. Open dashboard</p>
+              <p className="mt-1">Navigate to proposals, analytics, and content tools.</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">3. Use AI features</p>
+              <p className="mt-1">Guest: concierge help. Sales: generate proposals, revise pricing, and run analytics.</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">4. Take action</p>
+              <p className="mt-1">Send proposals, track progress, and follow up fast.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ─── Stats Section ─── */
 function StatsSection() {
   const { ref, visible } = useReveal();
@@ -732,6 +820,7 @@ function Footer() {
           <div className="flex items-center gap-6 text-sm text-gray-500">
             <a href="#features" className="transition-colors hover:text-gray-900">Features</a>
             <a href="#how-it-works" className="transition-colors hover:text-gray-900">How It Works</a>
+            <a href="#help" className="transition-colors hover:text-gray-900">Help</a>
             <Link href="/login" className="transition-colors hover:text-gray-900">Sign In</Link>
           </div>
 
@@ -753,6 +842,7 @@ export default function HomePage() {
       <HeroSection />
       <FeaturesSection />
       <HowItWorksSection />
+      <HelpSection />
       <StatsSection />
       <TestimonialSection />
       <CTASection />

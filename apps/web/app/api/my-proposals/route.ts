@@ -74,6 +74,8 @@ export async function GET() {
         displayStatus = 'signed';
       } else if (liveStatus === 'rejected' || liveStatus === 'lost') {
         displayStatus = 'rejected';
+      } else if (liveStatus === 'withdrawn') {
+        displayStatus = 'withdrawn';
       } else if (liveStatus === 'expired') {
         displayStatus = 'expired';
       } else if (liveStatus === 'active' && isViewed) {
