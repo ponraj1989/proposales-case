@@ -614,7 +614,7 @@ export default function ProposalsPage() {
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
                 </svg>
-                Kanban
+                Board
               </button>
               <button
                 onClick={() => setViewMode('table')}
@@ -640,30 +640,32 @@ export default function ProposalsPage() {
       />
 
       {/* Filters */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-2 overflow-x-auto">
-          {STATUS_FILTERS.map((status) => (
-            <button
-              key={status}
-              onClick={() => setStatusFilter(status)}
-              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                statusFilter === status
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {status.charAt(0).toUpperCase() + status.slice(1)}
-            </button>
-          ))}
+      {viewMode === 'table' && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex gap-2 overflow-x-auto">
+            {STATUS_FILTERS.map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  statusFilter === status
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+              </button>
+            ))}
+          </div>
+          <div className="w-full sm:w-64">
+            <Input
+              placeholder="Search proposals..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
         </div>
-        <div className="w-full sm:w-64">
-          <Input
-            placeholder="Search proposals..."
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-          />
-        </div>
-      </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -1103,130 +1105,134 @@ function KanbanBoard({
 
   if (isLoading) {
     return (
-      <div className="flex gap-4 overflow-x-auto pb-4">
-        {KANBAN_COLUMNS.map((col) => (
-          <div key={col.key} className="flex-shrink-0 w-64">
-            <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-3 space-y-3">
-              <div className="flex items-center gap-2">
-                <div className={cn('h-2.5 w-2.5 rounded-full', col.color)} />
-                <span className="text-sm font-semibold text-gray-700">{col.label}</span>
+      <div className="overflow-x-auto pb-4">
+        <div className="flex min-w-max gap-4">
+          {KANBAN_COLUMNS.map((col) => (
+            <div key={col.key} className="w-64 flex-shrink-0">
+              <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className={cn('h-2.5 w-2.5 rounded-full', col.color)} />
+                  <span className="text-sm font-semibold text-gray-700">{col.label}</span>
+                </div>
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-24 rounded-lg bg-gray-100 animate-pulse" />
+                ))}
               </div>
-              {[1, 2].map((i) => (
-                <div key={i} className="h-24 rounded-lg bg-gray-100 animate-pulse" />
-              ))}
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
-      {KANBAN_COLUMNS.map((col) => {
-        const colProposals = proposals.filter((p) => getColumn(p) === col.key);
+    <div className="overflow-x-auto pb-4">
+      <div className="flex min-w-max gap-4">
+        {KANBAN_COLUMNS.map((col) => {
+          const colProposals = proposals.filter((p) => getColumn(p) === col.key);
 
-        return (
-          <div key={col.key} className="flex-shrink-0 w-72">
-            <div
-              className={cn(
-                'rounded-xl border border-gray-200 bg-gray-50/30 p-3 transition-colors',
-                activeDropColumn === col.key && 'ring-2 ring-gray-300 bg-gray-100/60',
-              )}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setActiveDropColumn(col.key);
-              }}
-              onDragEnter={(e) => {
-                e.preventDefault();
-                setActiveDropColumn(col.key);
-              }}
-              onDragLeave={() => {
-                if (activeDropColumn === col.key) setActiveDropColumn(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const uuid = e.dataTransfer.getData('text/plain');
-                setActiveDropColumn(null);
-                setDraggedUuid(null);
-                if (uuid) {
-                  onMoveCard(uuid, col.key);
-                }
-              }}
-            >
-              {/* Column Header */}
-              <div className="flex items-center justify-between mb-3 px-1">
-                <div className="flex items-center gap-2">
-                  <div className={cn('h-2.5 w-2.5 rounded-full', col.color)} />
-                  <span className="text-sm font-semibold text-gray-700">{col.label}</span>
-                </div>
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-gray-200 px-1.5 text-[0.65rem] font-semibold text-gray-600">
-                  {colProposals.length}
-                </span>
-              </div>
-
-              {/* Cards */}
-              <div className="space-y-2 min-h-[100px]">
-                {colProposals.length === 0 && (
-                  <div className="flex items-center justify-center py-8 text-xs text-gray-400">
-                    No proposals
-                  </div>
+          return (
+            <div key={col.key} className="w-72 flex-shrink-0">
+              <div
+                className={cn(
+                  'rounded-xl border border-gray-200 bg-gray-50/30 p-3 transition-colors',
+                  activeDropColumn === col.key && 'ring-2 ring-gray-300 bg-gray-100/60',
                 )}
-                {colProposals.map((p, i) => (
-                  <div
-                    key={p.uuid as string}
-                    onClick={() => onCardClick(p.uuid as string)}
-                    draggable
-                    onDragStart={(e) => {
-                      const uuid = p.uuid as string;
-                      e.dataTransfer.setData('text/plain', uuid);
-                      setDraggedUuid(uuid);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedUuid(null);
-                      setActiveDropColumn(null);
-                    }}
-                    className={cn(
-                      'kanban-card cursor-pointer rounded-lg border bg-white p-3 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5',
-                      col.border,
-                      draggedUuid === (p.uuid as string) && 'opacity-60',
-                    )}
-                    style={{ animationDelay: `${i * 50}ms` }}
-                  >
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {(p.title_md || p.title || 'Untitled') as string}
-                    </p>
-                    {/* Live status stepper */}
-                    <div className="mt-1.5">
-                      <ProposalStatusStepper proposal={p} compact />
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setActiveDropColumn(col.key);
+                }}
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  setActiveDropColumn(col.key);
+                }}
+                onDragLeave={() => {
+                  if (activeDropColumn === col.key) setActiveDropColumn(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const uuid = e.dataTransfer.getData('text/plain');
+                  setActiveDropColumn(null);
+                  setDraggedUuid(null);
+                  if (uuid) {
+                    onMoveCard(uuid, col.key);
+                  }
+                }}
+              >
+                {/* Column Header */}
+                <div className="mb-3 flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2">
+                    <div className={cn('h-2.5 w-2.5 rounded-full', col.color)} />
+                    <span className="text-sm font-semibold text-gray-700">{col.label}</span>
+                  </div>
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-gray-200 px-1.5 text-[0.65rem] font-semibold text-gray-600">
+                    {colProposals.length}
+                  </span>
+                </div>
+
+                {/* Cards */}
+                <div className="min-h-[100px] space-y-2">
+                  {colProposals.length === 0 && (
+                    <div className="flex items-center justify-center py-8 text-xs text-gray-400">
+                      No proposals
                     </div>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-xs text-gray-500">
-                        {(p.contact_name || p.recipient_name || '—') as string}
-                      </span>
-                      {p.value_with_tax != null && (
-                        <span className="text-xs font-semibold text-gray-700">
-                          {formatCurrency((p.value_with_tax as number) || 0, (p.currency as string) || 'EUR')}
+                  )}
+                  {colProposals.map((p, i) => (
+                    <div
+                      key={p.uuid as string}
+                      onClick={() => onCardClick(p.uuid as string)}
+                      draggable
+                      onDragStart={(e) => {
+                        const uuid = p.uuid as string;
+                        e.dataTransfer.setData('text/plain', uuid);
+                        setDraggedUuid(uuid);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedUuid(null);
+                        setActiveDropColumn(null);
+                      }}
+                      className={cn(
+                        'kanban-card cursor-pointer rounded-lg border bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
+                        col.border,
+                        draggedUuid === (p.uuid as string) && 'opacity-60',
+                      )}
+                      style={{ animationDelay: `${i * 50}ms` }}
+                    >
+                      <p className="truncate text-sm font-medium text-gray-900">
+                        {(p.title_md || p.title || 'Untitled') as string}
+                      </p>
+                      {/* Live status stepper */}
+                      <div className="mt-1.5">
+                        <ProposalStatusStepper proposal={p} compact />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                          {(p.contact_name || p.recipient_name || '—') as string}
                         </span>
+                        {p.value_with_tax != null && (
+                          <span className="text-xs font-semibold text-gray-700">
+                            {formatCurrency((p.value_with_tax as number) || 0, (p.currency as string) || 'EUR')}
+                          </span>
+                        )}
+                      </div>
+                      {p.updated_at ? (
+                        <p className="mt-1.5 text-[0.6rem] text-gray-400">
+                          {formatRelativeTime(p.updated_at as number)}
+                        </p>
+                      ) : null}
+                      {emailStatusMap[(p.uuid as string) ?? ''] && (
+                        <div className="mt-1.5">
+                          <EmailStatusBadge status={emailStatusMap[(p.uuid as string) ?? ''].status} />
+                        </div>
                       )}
                     </div>
-                    {p.updated_at ? (
-                      <p className="mt-1.5 text-[0.6rem] text-gray-400">
-                        {formatRelativeTime(p.updated_at as number)}
-                      </p>
-                    ) : null}
-                    {emailStatusMap[(p.uuid as string) ?? ''] && (
-                      <div className="mt-1.5">
-                        <EmailStatusBadge status={emailStatusMap[(p.uuid as string) ?? ''].status} />
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

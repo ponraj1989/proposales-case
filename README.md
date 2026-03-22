@@ -127,6 +127,22 @@ Open [http://localhost:3000](http://localhost:3000) — you'll be redirected to 
 npm run build
 ```
 
+## Proposal Search Limit (Why we can show more than 25)
+
+The upstream Proposales `proposal-search` endpoint is capped at **25 items per request**.
+There is no documented offset/page pagination that we can rely on.
+
+To fetch more than 25 in the app, we use a **fan-out + dedupe** strategy:
+- Run one unfiltered search request.
+- Run additional search requests per status (`draft`, `active`, `accepted`, `rejected`, `lost`, `expired`, `template`, `withdrawn`, `replaced`).
+- Merge all results and deduplicate by proposal UUID.
+
+This increases coverage significantly, but it is not mathematically guaranteed to return every proposal if any single status bucket itself contains more than 25 records.
+
+Implementation references:
+- `packages/api-client/src/endpoints/proposals.ts` (`searchAll`)
+- `apps/web/app/api/proposales/proposals/route.ts` (status aggregation + enrichment)
+
 ## Deploy to Vercel
 
 1. Push to GitHub

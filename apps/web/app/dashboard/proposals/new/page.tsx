@@ -261,16 +261,13 @@ export default function NewProposalBuilderPage() {
     taxLabel: 'VAT',
     heroImageUrl: '',
     heroImageUuid: '',
-    backgroundImageId: '',
-    backgroundImageUuid: '',
-    backgroundVideoId: '',
-    backgroundVideoUuid: '',
   });
   const [selectedBlocks, setSelectedBlocks] = useState<SelectedBlock[]>([]);
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<number[]>([]);
   const [externalAttachments, setExternalAttachments] = useState<ExternalAttachment[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [pricingInsight, setPricingInsight] = useState<PricingInsight | null>(null);
+  const [selectedTemplateUuid, setSelectedTemplateUuid] = useState('');
 
   // PMS Calendar
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -302,6 +299,16 @@ export default function NewProposalBuilderPage() {
       title: item.title?.en || Object.values(item.title || {})[0] || 'Content image',
     }))).filter((img) => !!img.url),
     [contentItems],
+  );
+
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.uuid === selectedTemplateUuid) ?? null,
+    [templates, selectedTemplateUuid],
+  );
+
+  const selectedTemplateImage = useMemo(
+    () => imageLibrary.find((image) => image.uuid === selectedTemplate?.background_image_uuid) ?? null,
+    [imageLibrary, selectedTemplate],
   );
 
   // Calendar fetch
@@ -545,12 +552,8 @@ export default function NewProposalBuilderPage() {
             url: attachment.url.trim(),
           })),
       ];
-      const backgroundImage = form.backgroundImageId.trim() && form.backgroundImageUuid.trim()
-        ? { id: Number(form.backgroundImageId), uuid: form.backgroundImageUuid.trim() }
-        : undefined;
-      const backgroundVideo = form.backgroundVideoId.trim() && form.backgroundVideoUuid.trim()
-        ? { id: Number(form.backgroundVideoId), uuid: form.backgroundVideoUuid.trim() }
-        : undefined;
+      const effectiveHeroImageUrl = selectedTemplateImage?.url || form.heroImageUrl || undefined;
+      const effectiveHeroImageUuid = selectedTemplateImage?.uuid || form.heroImageUuid || undefined;
 
       const payload: Record<string, unknown> = {
         company_id: defaultCompany.id,
@@ -559,8 +562,6 @@ export default function NewProposalBuilderPage() {
         title_md: form.title || undefined,
         description_md: form.description || undefined,
         contact_email: internalContactEmail,
-        background_image: backgroundImage,
-        background_video: backgroundVideo,
         recipient: {
           first_name: firstName,
           last_name: lastName,
@@ -587,8 +588,10 @@ export default function NewProposalBuilderPage() {
           negotiation_round: 0,
           discount_applied: 0,
           custom_fields: metadataFields,
-          hero_image_url: form.heroImageUrl || undefined,
-          hero_image_uuid: form.heroImageUuid || undefined,
+          hero_image_url: effectiveHeroImageUrl,
+          hero_image_uuid: effectiveHeroImageUuid,
+          template_uuid: selectedTemplate?.uuid || undefined,
+          template_title: selectedTemplate?.title || undefined,
           selected_content_items: selectedBlocks.map((block) => ({
             variation_id: block.id,
             title: block.title,
@@ -641,7 +644,8 @@ export default function NewProposalBuilderPage() {
   const previewTitle = form.title || 'Untitled proposal';
   const previewRecipient = form.contactName || 'Recipient not set';
   const previewVenueImage = getVenueImage(selectedSpace?.space_type || form.venueType);
-  const previewHeroImage = form.heroImageUrl
+  const previewHeroImage = selectedTemplateImage?.url
+    || form.heroImageUrl
     || previewVenueImage?.url
     || selectedBlocks.find((block) => block.imageUrl)?.imageUrl
     || DEFAULT_PREVIEW_IMAGE;
@@ -1043,67 +1047,97 @@ export default function NewProposalBuilderPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Background Media</CardTitle>
+              <CardTitle>Template & Preview</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <Input
-                  label="Background Image ID"
-                  type="number"
-                  value={form.backgroundImageId}
-                  onChange={(e) => setForm((prev) => ({ ...prev, backgroundImageId: e.target.value }))}
-                  placeholder="Template asset ID"
-                />
-                <Input
-                  label="Background Image UUID"
-                  value={form.backgroundImageUuid}
-                  onChange={(e) => setForm((prev) => ({ ...prev, backgroundImageUuid: e.target.value }))}
-                  placeholder="Template asset UUID"
-                />
-                <Input
-                  label="Background Video ID"
-                  type="number"
-                  value={form.backgroundVideoId}
-                  onChange={(e) => setForm((prev) => ({ ...prev, backgroundVideoId: e.target.value }))}
-                  placeholder="Video asset ID"
-                />
-                <Input
-                  label="Background Video UUID"
-                  value={form.backgroundVideoUuid}
-                  onChange={(e) => setForm((prev) => ({ ...prev, backgroundVideoUuid: e.target.value }))}
-                  placeholder="Video asset UUID"
-                />
-              </div>
-              {templates.length > 0 && (
-                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="mb-2 text-xs font-medium text-gray-600">Available Templates</div>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {templates.slice(0, 6).map((template) => (
-                      <div key={template.uuid} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
-                        <div className="font-medium text-gray-900">{template.title}</div>
-                        <div className="text-xs text-gray-500">{template.language} · {template.background_image_uuid || 'No image uuid'}</div>
-                      </div>
-                    ))}
+              {templates.length > 0 ? (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">Available Templates</div>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Select a company template to apply its background image in the live preview when that asset exists in your content library.
+                    </p>
                   </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {templates.map((template) => {
+                      const templateImage = imageLibrary.find((image) => image.uuid === template.background_image_uuid);
+                      const isSelected = template.uuid === selectedTemplateUuid;
+
+                      return (
+                        <button
+                          key={template.uuid}
+                          type="button"
+                          onClick={() => setSelectedTemplateUuid((current) => (current === template.uuid ? '' : template.uuid))}
+                          className={cn(
+                            'rounded-xl border p-4 text-left transition',
+                            isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-sm' : 'border-gray-200 bg-white hover:border-gray-400',
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className={cn('text-sm font-semibold', isSelected ? 'text-white' : 'text-gray-900')}>
+                                {template.title}
+                              </div>
+                              <div className={cn('mt-1 text-xs uppercase tracking-[0.18em]', isSelected ? 'text-gray-300' : 'text-gray-400')}>
+                                {template.language}
+                              </div>
+                            </div>
+                            <span className={cn(
+                              'rounded-full px-2 py-1 text-[11px] font-medium',
+                              templateImage
+                                ? (isSelected ? 'bg-white/15 text-white' : 'bg-emerald-50 text-emerald-700')
+                                : (isSelected ? 'bg-white/10 text-gray-200' : 'bg-amber-50 text-amber-700'),
+                            )}>
+                              {templateImage ? 'Preview ready' : 'Metadata only'}
+                            </span>
+                          </div>
+                          <div className={cn('mt-3 text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>
+                            Background UUID: {template.background_image_uuid || 'Unavailable'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedTemplate && !selectedTemplateImage && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      The selected template is stored in proposal metadata, but its background image could not be resolved from the current content library, so the preview is using the normal fallback image.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500">
+                  No company templates are available for the selected company yet.
                 </div>
               )}
-              <div className="grid gap-3 md:grid-cols-3">
-                {imageLibrary.slice(0, 9).map((image) => (
-                  <button
-                    key={image.uuid}
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, heroImageUrl: image.url || '', heroImageUuid: image.uuid }))}
-                    className={cn(
-                      'overflow-hidden rounded-xl border text-left transition hover:border-gray-400',
-                      form.heroImageUuid === image.uuid ? 'border-gray-900 ring-2 ring-gray-200' : 'border-gray-200',
-                    )}
-                  >
-                    <div className="aspect-[4/3] bg-gray-100">
-                      <img src={image.url} alt={image.title} className="h-full w-full object-cover" />
-                    </div>
-                    <div className="px-3 py-2 text-xs font-medium text-gray-700">{image.title}</div>
-                  </button>
-                ))}
+
+              <div className="space-y-3 border-t border-gray-200 pt-4">
+                <div>
+                  <div className="text-sm font-medium text-gray-900">Custom Hero Image</div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Pick a content image if you want to override the venue fallback. Choosing a custom image clears the active template selection.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {imageLibrary.slice(0, 9).map((image) => (
+                    <button
+                      key={image.uuid}
+                      type="button"
+                      onClick={() => {
+                        setSelectedTemplateUuid('');
+                        setForm((prev) => ({ ...prev, heroImageUrl: image.url || '', heroImageUuid: image.uuid }));
+                      }}
+                      className={cn(
+                        'overflow-hidden rounded-xl border text-left transition hover:border-gray-400',
+                        !selectedTemplateUuid && form.heroImageUuid === image.uuid ? 'border-gray-900 ring-2 ring-gray-200' : 'border-gray-200',
+                      )}
+                    >
+                      <div className="aspect-[4/3] bg-gray-100">
+                        <img src={image.url} alt={image.title} className="h-full w-full object-cover" />
+                      </div>
+                      <div className="px-3 py-2 text-xs font-medium text-gray-700">{image.title}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1357,6 +1391,11 @@ export default function NewProposalBuilderPage() {
                     <div className="text-xs uppercase tracking-[0.24em] text-gray-400">Proposal Preview</div>
                     <h2 className="mt-2 text-2xl font-semibold text-gray-900">{previewTitle}</h2>
                     <p className="mt-1 text-sm text-gray-500">Prepared for {previewRecipient}</p>
+                    {selectedTemplate && (
+                      <p className="mt-2 text-xs uppercase tracking-[0.2em] text-gray-400">
+                        Template: {selectedTemplate.title}
+                      </p>
+                    )}
                   </div>
                   <div className="rounded-xl bg-gray-50 p-4 text-sm text-gray-700 whitespace-pre-wrap">
                     {form.description || 'Your AI-generated or manually written proposal description will appear here.'}
@@ -1385,6 +1424,7 @@ export default function NewProposalBuilderPage() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-gray-600">
               <SummaryRow label="Company" value={defaultCompany?.name || 'No company available'} />
+              <SummaryRow label="Template" value={selectedTemplate?.title || 'None selected'} />
               <SummaryRow label="Blocks" value={String(selectedBlocks.length)} />
               <SummaryRow label="Attachments" value={String(selectedAttachmentIds.length)} />
               <SummaryRow label="Custom Fields" value={String(customFields.length)} />
