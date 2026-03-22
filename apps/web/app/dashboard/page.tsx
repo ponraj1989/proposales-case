@@ -23,7 +23,10 @@ export default async function DashboardPage() {
     for (const statusProposals of proposalsByStatus) {
       const items = Array.isArray(statusProposals) ? statusProposals : [];
       for (const proposal of items) {
-        const uuid = (proposal as Record<string, unknown>)?.uuid as string | undefined;
+        const uuid =
+          proposal && typeof proposal === 'object' && 'uuid' in proposal && typeof proposal.uuid === 'string'
+            ? proposal.uuid
+            : undefined;
         if (uuid && !proposalMap.has(uuid)) {
           proposalMap.set(uuid, proposal);
         }
