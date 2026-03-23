@@ -819,7 +819,7 @@ export default function AIAssistantPage() {
             )}
           </div>
           {/* Mode toggle */}
-          {
+          {!isSales &&
             <div className="ml-auto flex items-center gap-2">
               <div className="flex items-center rounded-xl border border-gray-200 bg-gray-50 p-0.5">
               <button
