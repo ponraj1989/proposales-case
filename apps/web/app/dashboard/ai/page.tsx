@@ -193,70 +193,6 @@ const LANGUAGES = [
   { code: 'ja', label: '日本語', flag: '🇯🇵' },
 ];
 
-// ─── UI Translations (chat page only) ───
-
-type LangCode = 'en' | 'sv' | 'de' | 'fr' | 'es' | 'zh' | 'ar' | 'ja';
-
-const UI_STRINGS: Record<string, Record<LangCode, string>> = {
-  conversations: { en: 'Conversations', sv: 'Konversationer', de: 'Gespräche', fr: 'Conversations', es: 'Conversaciones', zh: '对话', ar: 'المحادثات', ja: '会話' },
-  newChat: { en: 'New chat', sv: 'Ny chatt', de: 'Neuer Chat', fr: 'Nouveau chat', es: 'Nuevo chat', zh: '新对话', ar: 'محادثة جديدة', ja: '新しいチャット' },
-  noConversations: { en: 'No conversations yet', sv: 'Inga konversationer ännu', de: 'Noch keine Gespräche', fr: 'Aucune conversation', es: 'Sin conversaciones aún', zh: '暂无对话', ar: 'لا توجد محادثات بعد', ja: 'まだ会話がありません' },
-  startTyping: { en: 'Start typing to begin', sv: 'Börja skriva för att starta', de: 'Tippe, um zu beginnen', fr: 'Commencez à écrire', es: 'Escribe para comenzar', zh: '输入开始', ar: 'ابدأ بالكتابة', ja: '入力して開始' },
-  deleteConversation: { en: 'Delete conversation', sv: 'Ta bort konversation', de: 'Gespräch löschen', fr: 'Supprimer la conversation', es: 'Eliminar conversación', zh: '删除对话', ar: 'حذف المحادثة', ja: '会話を削除' },
-  salesTitle: { en: 'AI Sales Assistant', sv: 'AI Säljassistent', de: 'KI-Verkaufsassistent', fr: 'Assistant IA de vente', es: 'Asistente IA de ventas', zh: 'AI 销售助手', ar: 'مساعد مبيعات الذكاء الاصطناعي', ja: 'AI営業アシスタント' },
-  guestTitle: { en: '🏨 Your Hotel Buddy', sv: '🏨 Din Hotellkompis', de: '🏨 Dein Hotel-Buddy', fr: '🏨 Votre Compagnon Hôtelier', es: '🏨 Tu Amigo del Hotel', zh: '🏨 你的酒店伙伴', ar: '🏨 رفيقك الفندقي', ja: '🏨 ホテルバディ' },
-  salesSubtitle: { en: 'Create proposals, analyze pipeline, manage proposals', sv: 'Skapa offerter, analysera pipeline, hantera offerter', de: 'Angebote erstellen, Pipeline analysieren, Angebote verwalten', fr: 'Créer des offres, analyser le pipeline, gérer les propositions', es: 'Crear propuestas, analizar el pipeline, gestionar propuestas', zh: '创建提案、分析业务管道、管理提案', ar: 'إنشاء عروض، تحليل خط الأنابيب، إدارة العروض', ja: '提案作成、パイプライン分析、提案管理' },
-  guestSubtitle: { en: 'Events, rooms, prices & good vibes — ask me anything!', sv: 'Event, rum, priser & bra vibbar — fråga mig vad som helst!', de: 'Events, Räume, Preise & gute Laune — frag mich alles!', fr: 'Événements, chambres, prix & bonne ambiance — demandez-moi !', es: '¡Eventos, habitaciones, precios y buena onda — pregúntame!', zh: '活动、客房、价格和好心情——随便问我！', ar: 'فعاليات، غرف، أسعار وأجواء رائعة — اسألني أي شيء!', ja: 'イベント、客室、料金＆楽しい雰囲気——何でも聞いて！' },
-  salesDraftNote: { en: 'Sales AI can generate proposal drafts and create proposals after your confirmation.', sv: 'Sälj-AI kan generera offertförslag och skapa offerter efter din bekräftelse.', de: 'Die Verkaufs-KI kann Angebotsentwürfe generieren und nach Ihrer Bestätigung erstellen.', fr: "L'IA de vente peut générer des brouillons et créer des propositions après votre confirmation.", es: 'La IA de ventas puede generar borradores y crear propuestas tras su confirmación.', zh: '销售AI可以生成提案草稿，并在您确认后创建提案。', ar: 'يمكن لذكاء المبيعات إنشاء مسودات عروض وإنشاء عروض بعد تأكيدك.', ja: '営業AIが提案の下書きを作成し、確認後に提案を作成できます。' },
-  chatMode: { en: 'Chat', sv: 'Chatt', de: 'Chat', fr: 'Chat', es: 'Chat', zh: '聊天', ar: 'محادثة', ja: 'チャット' },
-  formMode: { en: 'Form', sv: 'Formulär', de: 'Formular', fr: 'Formulaire', es: 'Formulario', zh: '表单', ar: 'نموذج', ja: 'フォーム' },
-  salesPlaceholder: { en: 'Ask about analytics, charts, pipeline insights, or improvements...', sv: 'Fråga om analys, diagram, pipeline-insikter eller förbättringar...', de: 'Fragen Sie nach Analysen, Diagrammen, Pipeline-Einblicken oder Verbesserungen...', fr: "Posez vos questions sur l'analytique, les graphiques, le pipeline ou les améliorations...", es: 'Pregunta sobre análisis, gráficos, pipeline o mejoras...', zh: '询问分析、图表、业务洞察或改进建议...', ar: 'اسأل عن التحليلات، الرسوم البيانية، رؤى خط الأنابيب أو التحسينات...', ja: '分析、チャート、パイプラインの洞察、改善点について質問...' },
-  guestPlaceholder: { en: 'Ask me about rooms, parties, food, or anything hotel-related! 🌟', sv: 'Fråga mig om rum, fester, mat eller allt hotellrelaterat! 🌟', de: 'Frag mich nach Zimmern, Feiern, Essen oder allem rund ums Hotel! 🌟', fr: 'Demandez-moi pour les chambres, fêtes, repas ou tout ce qui concerne l\'hôtel ! 🌟', es: '¡Pregúntame sobre habitaciones, fiestas, comida o cualquier cosa del hotel! 🌟', zh: '问我关于客房、派对、餐饮或任何酒店相关的事情！🌟', ar: 'اسألني عن الغرف، الحفلات، الطعام أو أي شيء يتعلق بالفندق! 🌟', ja: '客室、パーティー、料理、ホテルのことなら何でも聞いて！🌟' },
-  aiDisclaimer: { en: 'AI can make mistakes. Always double-check proposals before sending — even robots need a proofreader! 🤖', sv: 'AI kan göra misstag. Dubbelkolla alltid offerter innan du skickar — även robotar behöver korrekturläsare! 🤖', de: 'KI kann Fehler machen. Überprüfen Sie Angebote immer vor dem Senden — auch Roboter brauchen Korrekturleser! 🤖', fr: "L'IA peut faire des erreurs. Vérifiez toujours les propositions avant envoi — même les robots ont besoin d'un correcteur ! 🤖", es: 'La IA puede cometer errores. Siempre revisa las propuestas antes de enviar — ¡hasta los robots necesitan corrector! 🤖', zh: 'AI可能会犯错。发送前请务必仔细检查提案——机器人也需要校对员！🤖', ar: 'قد يخطئ الذكاء الاصطناعي. تحقق دائمًا من العروض قبل الإرسال — حتى الروبوتات تحتاج مدققًا! 🤖', ja: 'AIは間違えることがあります。送信前に提案を必ず確認してください——ロボットも校正者が必要です！🤖' },
-  timedOut: { en: 'Response timed out. Please send again to continue.', sv: 'Svaret tog för lång tid. Skicka igen för att fortsätta.', de: 'Zeitüberschreitung. Bitte erneut senden, um fortzufahren.', fr: 'Réponse expirée. Renvoyez pour continuer.', es: 'Tiempo agotado. Envía de nuevo para continuar.', zh: '响应超时。请重新发送以继续。', ar: 'انتهت مهلة الاستجابة. أعد الإرسال للمتابعة.', ja: '応答がタイムアウトしました。続行するには再送信してください。' },
-  salesEmptyTitle: { en: 'Sales Analytics & Insights', sv: 'Säljanalys & Insikter', de: 'Verkaufsanalysen & Insights', fr: 'Analyses & Insights de Vente', es: 'Análisis de Ventas & Insights', zh: '销售分析与洞察', ar: 'تحليلات المبيعات والرؤى', ja: '営業分析＆インサイト' },
-  guestEmptyTitle: { en: 'Hey there! 👋 Welcome!', sv: 'Hej! 👋 Välkommen!', de: 'Hallo! 👋 Willkommen!', fr: 'Bonjour ! 👋 Bienvenue !', es: '¡Hola! 👋 ¡Bienvenido!', zh: '你好！👋 欢迎！', ar: 'مرحبًا! 👋 أهلاً وسهلاً!', ja: 'こんにちは！👋 ようこそ！' },
-  salesEmptyDesc: { en: 'I can visualize your data with charts, analyze pipeline performance, and suggest improvements. To create proposals, head to the Proposals page.', sv: 'Jag kan visualisera din data med diagram, analysera pipeline-prestanda och föreslå förbättringar. För att skapa offerter, gå till Offertsidan.', de: 'Ich kann Ihre Daten mit Diagrammen visualisieren, die Pipeline-Performance analysieren und Verbesserungen vorschlagen.', fr: "Je peux visualiser vos données avec des graphiques, analyser les performances du pipeline et suggérer des améliorations.", es: 'Puedo visualizar tus datos con gráficos, analizar el rendimiento del pipeline y sugerir mejoras.', zh: '我可以用图表可视化您的数据，分析业务管道表现，并提出改进建议。', ar: 'يمكنني عرض بياناتك بالرسوم البيانية، تحليل أداء خط الأنابيب واقتراح تحسينات.', ja: 'チャートでデータを可視化し、パイプラインのパフォーマンスを分析し、改善を提案できます。' },
-  guestEmptyDesc: { en: "I'm your friendly hotel concierge — think of me as the person who knows all the best rooms, the tastiest menus, and the secret to a perfect event. Let's make something amazing! ✨", sv: 'Jag är din vänliga hotellconcierge — tänk på mig som den som känner till de bästa rummen, godaste menyerna och hemligheten till ett perfekt event. Låt oss skapa något fantastiskt! ✨', de: 'Ich bin Ihr freundlicher Hotel-Concierge — ich kenne die besten Zimmer, leckersten Menüs und das Geheimnis perfekter Events. Lassen Sie uns etwas Großartiges schaffen! ✨', fr: "Je suis votre concierge d'hôtel — pensez à moi comme celui qui connaît les meilleures chambres, les menus les plus savoureux et le secret d'un événement parfait. Créons quelque chose d'incroyable ! ✨", es: 'Soy tu concierge del hotel — piensa en mí como quien conoce las mejores habitaciones, los menús más sabrosos y el secreto de un evento perfecto. ¡Hagamos algo increíble! ✨', zh: '我是您友好的酒店礼宾——我了解最好的房间、最美味的菜单和完美活动的秘密。让我们一起创造美好体验！✨', ar: 'أنا كونسيرج الفندق الودود — فكّر بي كمن يعرف أفضل الغرف وأشهى الأطباق وسر الحدث المثالي. لنصنع شيئًا رائعًا! ✨', ja: '私はフレンドリーなホテルコンシェルジュ——最高の部屋、最高のメニュー、完璧なイベントの秘密を知っています。素晴らしい体験を一緒に作りましょう！✨' },
-  salesDraftEmptyNote: { en: 'Sales AI can also generate proposal drafts and create proposals after your confirmation.', sv: 'Sälj-AI kan också generera offertförslag och skapa offerter efter din bekräftelse.', de: 'Die Verkaufs-KI kann auch Angebotsentwürfe generieren und nach Ihrer Bestätigung erstellen.', fr: "L'IA peut aussi générer des brouillons et créer des propositions après confirmation.", es: 'La IA también puede generar borradores y crear propuestas tras su confirmación.', zh: '销售AI还可以生成提案草稿，并在您确认后创建提案。', ar: 'يمكن لذكاء المبيعات أيضًا إنشاء مسودات وإنشاء عروض بعد تأكيدك.', ja: '営業AIは提案の下書きを作成し、確認後に提案を作成することもできます。' },
-  quickBooking: { en: 'Quick Event Booking', sv: 'Snabb Eventbokning', de: 'Schnelle Eventbuchung', fr: 'Réservation Rapide', es: 'Reserva Rápida de Evento', zh: '快速活动预订', ar: 'حجز سريع للفعالية', ja: 'クイックイベント予約' },
-  quickBookingDesc: { en: 'Fill in the details below to generate an accurate proposal', sv: 'Fyll i uppgifterna nedan för att generera en korrekt offert', de: 'Füllen Sie die Details aus, um ein genaues Angebot zu erstellen', fr: 'Remplissez les détails ci-dessous pour générer une proposition précise', es: 'Complete los detalles abajo para generar una propuesta precisa', zh: '填写以下详细信息以生成准确的提案', ar: 'املأ التفاصيل أدناه لإنشاء عرض دقيق', ja: '正確な提案を作成するために、以下の詳細を入力してください' },
-};
-
-const SALES_SUGGESTIONS_I18N: Record<LangCode, string[]> = {
-  en: ['Show me a chart of proposals by status', 'Visualize revenue trend by month', 'Show my win rate trend over time', 'What are my top companies by proposal count?', 'Show a pipeline funnel of my proposals', 'How can I improve my conversion rate?', 'Compare this quarter vs last quarter', 'Which proposals need follow-up?'],
-  sv: ['Visa ett diagram över offerter per status', 'Visualisera intäktstrend per månad', 'Visa min vinstrat-trend över tid', 'Vilka är mina toppföretag per offertantal?', 'Visa en pipeline-tratt för mina offerter', 'Hur kan jag förbättra min konverteringsgrad?', 'Jämför detta kvartal med förra kvartalet', 'Vilka offerter behöver uppföljning?'],
-  de: ['Zeig mir ein Diagramm der Angebote nach Status', 'Umsatztrend nach Monat visualisieren', 'Zeig meinen Gewinnraten-Trend', 'Welche sind meine Top-Unternehmen nach Angebotsanzahl?', 'Pipeline-Trichter meiner Angebote zeigen', 'Wie kann ich meine Konversionsrate verbessern?', 'Dieses Quartal mit letztem vergleichen', 'Welche Angebote brauchen Follow-up?'],
-  fr: ['Montre-moi un graphique des propositions par statut', 'Visualiser la tendance de revenus par mois', 'Montrer l\'évolution de mon taux de réussite', 'Quelles sont mes meilleures entreprises par nombre de propositions ?', 'Afficher l\'entonnoir pipeline de mes propositions', 'Comment améliorer mon taux de conversion ?', 'Comparer ce trimestre au précédent', 'Quelles propositions nécessitent un suivi ?'],
-  es: ['Muéstrame un gráfico de propuestas por estado', 'Visualizar tendencia de ingresos por mes', 'Mostrar mi tendencia de tasa de éxito', '¿Cuáles son mis principales empresas por número de propuestas?', 'Mostrar embudo del pipeline', '¿Cómo puedo mejorar mi tasa de conversión?', 'Comparar este trimestre con el anterior', '¿Qué propuestas necesitan seguimiento?'],
-  zh: ['按状态显示提案图表', '按月可视化收入趋势', '显示我的赢率趋势', '按提案数量排名的公司有哪些？', '显示我的提案漏斗', '如何提高转化率？', '本季度与上季度对比', '哪些提案需要跟进？'],
-  ar: ['أظهر لي رسمًا بيانيًا للعروض حسب الحالة', 'عرض اتجاه الإيرادات حسب الشهر', 'أظهر اتجاه معدل الفوز عبر الزمن', 'ما هي أفضل شركاتي حسب عدد العروض؟', 'عرض قمع خط الأنابيب لعروضي', 'كيف يمكنني تحسين معدل التحويل؟', 'مقارنة هذا الربع بالربع السابق', 'أي العروض تحتاج متابعة؟'],
-  ja: ['ステータス別の提案チャートを表示', '月別の収益トレンドを可視化', '成約率のトレンドを表示', '提案数トップの企業は？', '提案のパイプラインファネルを表示', 'コンバージョン率を改善するには？', '今四半期と前四半期を比較', 'フォローアップが必要な提案は？'],
-};
-
-const GUEST_SUGGESTIONS_I18N: Record<LangCode, string[]> = {
-  en: ['I want to book an event — help me get started! 🎉', 'What are your room rates and packages? 💰', 'Show me your facilities — ballrooms, boardrooms, gardens 🏨', 'What meals and catering options do you offer? 🍽️', 'Do you provide transportation or shuttle services? 🚗', 'I want to make changes to an existing booking ✏️', 'What conference rooms do you have with AV setup? 🎓', 'Plan a wedding reception for 150 guests 💒'],
-  sv: ['Jag vill boka ett event — hjälp mig komma igång! 🎉', 'Vad kostar era rum och paket? 💰', 'Visa mig era lokaler — festsalar, mötesrum, trädgårdar 🏨', 'Vilka måltider och catering erbjuder ni? 🍽️', 'Erbjuder ni transport eller shuttleservice? 🚗', 'Jag vill ändra en befintlig bokning ✏️', 'Vilka konferensrum med AV-utrustning har ni? 🎓', 'Planera en bröllopsmottagning för 150 gäster 💒'],
-  de: ['Ich möchte ein Event buchen — hilf mir beim Start! 🎉', 'Was kosten Ihre Zimmer und Pakete? 💰', 'Zeigen Sie mir Ihre Räumlichkeiten — Ballsäle, Konferenzräume, Gärten 🏨', 'Welche Mahlzeiten und Catering-Optionen bieten Sie? 🍽️', 'Bieten Sie Transport oder Shuttle-Service? 🚗', 'Ich möchte eine bestehende Buchung ändern ✏️', 'Welche Konferenzräume mit AV-Ausstattung haben Sie? 🎓', 'Planen Sie einen Hochzeitsempfang für 150 Gäste 💒'],
-  fr: ['Je veux réserver un événement — aidez-moi à commencer ! 🎉', 'Quels sont vos tarifs et forfaits ? 💰', 'Montrez-moi vos installations — salles de bal, salles de réunion, jardins 🏨', 'Quelles options de restauration proposez-vous ? 🍽️', 'Proposez-vous un service de transport ou navette ? 🚗', 'Je veux modifier une réservation existante ✏️', 'Quelles salles de conférence avec équipement AV avez-vous ? 🎓', 'Planifier une réception de mariage pour 150 invités 💒'],
-  es: ['¡Quiero reservar un evento — ayúdame a empezar! 🎉', '¿Cuáles son sus tarifas y paquetes? 💰', 'Muéstrame sus instalaciones — salones, salas de juntas, jardines 🏨', '¿Qué opciones de comida y catering ofrecen? 🍽️', '¿Ofrecen transporte o servicio de traslado? 🚗', 'Quiero hacer cambios en una reserva existente ✏️', '¿Qué salas de conferencia con equipo AV tienen? 🎓', 'Planear una recepción de boda para 150 invitados 💒'],
-  zh: ['我想预订一个活动——帮我开始吧！🎉', '你们的房间价格和套餐是什么？💰', '给我看看你们的设施——宴会厅、会议室、花园 🏨', '你们提供什么餐饮选择？🍽️', '你们提供交通或接送服务吗？🚗', '我想修改一个现有预订 ✏️', '你们有哪些带AV设备的会议室？🎓', '为150位宾客策划一场婚礼招待会 💒'],
-  ar: ['أريد حجز فعالية — ساعدني في البدء! 🎉', 'ما هي أسعار الغرف والباقات؟ 💰', 'أرني المرافق — قاعات، غرف اجتماعات، حدائق 🏨', 'ما خيارات الطعام والتموين المتوفرة؟ 🍽️', 'هل توفرون خدمة النقل أو التوصيل؟ 🚗', 'أريد تعديل حجز موجود ✏️', 'ما قاعات المؤتمرات المجهزة بأنظمة AV؟ 🎓', 'تخطيط حفل زفاف لـ150 ضيفًا 💒'],
-  ja: ['イベントを予約したい——手伝ってください！🎉', '客室料金とパッケージは？💰', '施設を見せて——ボールルーム、会議室、庭園 🏨', 'どんな食事とケータリングがありますか？🍽️', '送迎サービスはありますか？🚗', '既存の予約を変更したい ✏️', 'AV設備付きの会議室はありますか？🎓', '150名の結婚披露宴を計画 💒'],
-};
-
-function t(key: string, lang: string): string {
-  const langCode = (lang || 'en') as LangCode;
-  return UI_STRINGS[key]?.[langCode] ?? UI_STRINGS[key]?.en ?? key;
-}
-
-function getSuggestions(isSales: boolean, lang: string): string[] {
-  const langCode = (lang || 'en') as LangCode;
-  return isSales
-    ? (SALES_SUGGESTIONS_I18N[langCode] ?? SALES_SUGGESTIONS_I18N.en)
-    : (GUEST_SUGGESTIONS_I18N[langCode] ?? GUEST_SUGGESTIONS_I18N.en);
-}
-
 // ─── LocalStorage helpers (user-scoped) ───
 
 function getStorageKey(userId?: string | null): string {
@@ -369,7 +305,7 @@ export default function AIAssistantPage() {
   const hasBootstrappedConversationsRef = useRef(false);
   const { data: userData } = useUser();
   const isSales = userData?.role === 'sales';
-  const suggestions = getSuggestions(isSales, language);
+  const suggestions = isSales ? SALES_SUGGESTIONS : GUEST_SUGGESTIONS;
 
   const activeConversation = conversations.find((c) => c.id === activeConvId);
 
@@ -783,11 +719,11 @@ export default function AIAssistantPage() {
       >
         {/* Sidebar Header */}
         <div className="flex items-center justify-between px-4 py-3.5">
-          <span className="text-sm font-semibold text-gray-800">{t('conversations', language)}</span>
+          <span className="text-sm font-semibold text-gray-800">Conversations</span>
           <button
             onClick={handleNewChat}
             className="group flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-700 transition-all duration-200 hover:bg-gray-200 hover:scale-105 active:scale-95"
-            title={t('newChat', language)}
+            title="New chat"
           >
             <svg className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -804,8 +740,8 @@ export default function AIAssistantPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                 </svg>
               </div>
-              <p className="text-xs font-medium text-gray-500">{t('noConversations', language)}</p>
-              <p className="mt-1 text-[0.65rem] text-gray-400">{t('startTyping', language)}</p>
+              <p className="text-xs font-medium text-gray-500">No conversations yet</p>
+              <p className="mt-1 text-[0.65rem] text-gray-400">Start typing to begin</p>
             </div>
           )}
           {conversations.map((conv) => (
@@ -842,7 +778,7 @@ export default function AIAssistantPage() {
                   handleDeleteConversation(conv.id);
                 }}
                 className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg opacity-0 transition-all duration-200 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 text-gray-400"
-                title={t('deleteConversation', language)}
+                title="Delete conversation"
               >
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -871,14 +807,14 @@ export default function AIAssistantPage() {
             </svg>
           </div>
           <div className="flex-1">
-            <h2 className="text-base font-semibold text-gray-900">{isSales ? t('salesTitle', language) : t('guestTitle', language)}</h2>
+            <h2 className="text-base font-semibold text-gray-900">{isSales ? 'AI Sales Assistant' : '🏨 Your Hotel Buddy'}</h2>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
-              <p className="text-xs text-gray-500">{isSales ? t('salesSubtitle', language) : t('guestSubtitle', language)}</p>
+              <p className="text-xs text-gray-500">{isSales ? 'Create proposals, analyze pipeline, manage proposals' : 'Events, rooms, prices & good vibes — ask me anything!'}</p>
             </div>
             {isSales && (
               <p className="mt-0.5 text-[11px] font-medium text-gray-600">
-                {t('salesDraftNote', language)}
+                Sales AI can generate proposal drafts and create proposals after your confirmation.
               </p>
             )}
           </div>
@@ -898,7 +834,7 @@ export default function AIAssistantPage() {
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                 </svg>
-                {t('chatMode', language)}
+                Chat
               </button>
               <button
                 onClick={() => setChatMode('form')}
@@ -912,7 +848,7 @@ export default function AIAssistantPage() {
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
                 </svg>
-                {t('formMode', language)}
+                Form
               </button>
               </div>
             </div>
@@ -921,12 +857,12 @@ export default function AIAssistantPage() {
 
         {/* Messages or Form */}
         {chatMode === 'form' ? (
-          <EventBookingForm onSubmit={handleFormSubmit} isLoading={isLoading} userData={userData} language={language} />
+          <EventBookingForm onSubmit={handleFormSubmit} isLoading={isLoading} userData={userData} />
         ) : (
           <>
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
               {visibleMessages.length === 0 && !isBootstrappingConversations && (
-                <EmptyState suggestions={suggestions} onSelect={setInput} isSales={isSales} language={language} />
+                <EmptyState suggestions={suggestions} onSelect={setInput} isSales={isSales} />
               )}
 
               {visibleMessages.map((message, idx) => (
@@ -957,7 +893,7 @@ export default function AIAssistantPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={isSales ? t('salesPlaceholder', language) : t('guestPlaceholder', language)}
+                  placeholder={isSales ? 'Ask about analytics, charts, pipeline insights, or improvements...' : 'Ask me about rooms, parties, food, or anything hotel-related! 🌟'}
                   className="flex-1 h-12 bg-transparent text-sm placeholder:text-gray-400 focus:outline-none"
                   disabled={isLoading}
                 />
@@ -980,11 +916,11 @@ export default function AIAssistantPage() {
                 </button>
               </form>
               <p className="mt-2 text-center text-[0.65rem] text-gray-400">
-                {t('aiDisclaimer', language)}
+                AI can make mistakes. Always double-check proposals before sending — even robots need a proofreader! 🤖
               </p>
               {streamStalled && (
                 <p className="mt-1 text-center text-[0.7rem] text-amber-600">
-                  {t('timedOut', language)}
+                  Response timed out. Please send again to continue.
                 </p>
               )}
             </div>
@@ -1193,12 +1129,10 @@ function EventBookingForm({
   onSubmit,
   isLoading,
   userData,
-  language,
 }: {
   onSubmit: (data: EventFormData) => void;
   isLoading: boolean;
   userData?: { name: string | null; email: string | null } | undefined;
-  language: string;
 }) {
   const [form, setForm] = useState<EventFormData>({
     eventType: '',
@@ -1445,8 +1379,8 @@ function EventBookingForm({
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-gray-900">{t('quickBooking', language)}</h3>
-          <p className="text-sm text-gray-500 mt-1">{t('quickBookingDesc', language)}</p>
+          <h3 className="text-lg font-semibold text-gray-900">Quick Event Booking</h3>
+          <p className="text-sm text-gray-500 mt-1">Fill in the details below to generate an accurate proposal</p>
         </div>
 
         {/* Event Type */}
@@ -1931,12 +1865,10 @@ function EmptyState({
   suggestions,
   onSelect,
   isSales,
-  language,
 }: {
   suggestions: string[];
   onSelect: (s: string) => void;
   isSales: boolean;
-  language: string;
 }) {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-4">
@@ -1949,15 +1881,15 @@ function EmptyState({
           </svg>
         </div>
       </div>
-      <h3 className="text-xl font-bold text-gray-900 mb-1">{isSales ? t('salesEmptyTitle', language) : t('guestEmptyTitle', language)}</h3>
+      <h3 className="text-xl font-bold text-gray-900 mb-1">{isSales ? 'Sales Analytics & Insights' : 'Hey there! 👋 Welcome!'}</h3>
       <p className="text-sm text-gray-500 max-w-md mb-8">
         {isSales
-          ? t('salesEmptyDesc', language)
-          : t('guestEmptyDesc', language)}
+          ? 'I can visualize your data with charts, analyze pipeline performance, and suggest improvements. To create proposals, head to the Proposals page.'
+          : "I'm your friendly hotel concierge — think of me as the person who knows all the best rooms, the tastiest menus, and the secret to a perfect event. Let's make something amazing! ✨"}
       </p>
       {isSales && (
         <p className="mb-5 text-xs font-medium text-gray-600">
-          {t('salesDraftEmptyNote', language)}
+          Sales AI can also generate proposal drafts and create proposals after your confirmation.
         </p>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-2xl w-full">
