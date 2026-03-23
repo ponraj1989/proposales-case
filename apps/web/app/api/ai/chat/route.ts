@@ -4,6 +4,7 @@ import { createAllTools, createCustomerTools, systemPrompt } from '@proposales/a
 import { getSession, getUserRole, getUserEmail, getUserName } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limiter';
 import { saveMessages, type StoredMessage } from '@/lib/chat-store';
+import { getRedis } from '@/lib/redis';
 import { sendEsignEmail } from '@/lib/email';
 import { pushActivityFeedEvent } from '@/lib/activity-feed';
 import connectDB from '@/lib/mongodb';
@@ -11,6 +12,37 @@ import { UserProposal } from '@/lib/models';
 import * as pmsDb from '@/lib/pms-db';
 
 export const maxDuration = 60;
+
+/**
+ * Lightweight language detection from user text.
+ * Uses Unicode script ranges and common word patterns to identify the language.
+ * Returns an ISO 639-1 code or null if English/unknown.
+ */
+function detectLanguageCode(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length < 3) return null;
+
+  // Script-based detection (high confidence)
+  if (/[\u4E00-\u9FFF\u3400-\u4DBF]/.test(trimmed)) return 'zh';
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(trimmed)) return 'ja';
+  if (/[\uAC00-\uD7AF]/.test(trimmed)) return 'ko';
+  if (/[\u0600-\u06FF\u0750-\u077F]/.test(trimmed)) return 'ar';
+  if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+  if (/[\u0E00-\u0E7F]/.test(trimmed)) return 'th';
+  if (/[\u0400-\u04FF]/.test(trimmed)) return 'ru';
+
+  // Latin-script language detection via common word patterns
+  const lower = trimmed.toLowerCase();
+  if (/\b(jag|och|det|att|för|har|med|som|inte|kan|vill|boka|rum|ett|en)\b/.test(lower)) return 'sv';
+  if (/\b(ich|und|das|ist|ein|eine|nicht|haben|sie|wir|der|die|mit)\b/.test(lower)) return 'de';
+  if (/\b(je|et|le|la|les|un|une|des|est|sont|pas|dans|pour|avec|nous)\b/.test(lower)) return 'fr';
+  if (/\b(yo|el|la|los|las|es|son|que|para|con|una|del|por|como)\b/.test(lower)) return 'es';
+  if (/\b(eu|e|o|os|as|um|uma|do|da|não|para|com|que|por)\b/.test(lower)) return 'pt';
+  if (/\b(io|il|la|le|un|una|che|non|per|con|sono|del|di|da)\b/.test(lower)) return 'it';
+  if (/\b(en|het|de|van|een|is|dat|op|zijn|niet|voor|met|ook|maar)\b/.test(lower)) return 'nl';
+
+  return null;
+}
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -62,7 +94,40 @@ export async function POST(request: Request) {
     const companyContext = defaultCompanyId ? `\n[COMPANY ID] ${defaultCompanyId}` : '';
     const userContext = userEmail ? `\n[USER EMAIL] ${userEmail}` : '';
     const userNameContext = userName ? `\n[USER NAME] ${userName}` : '';
-    const langContext = language && language !== 'en' ? `\n[LANGUAGE] Respond in ${language}. Use this language for all conversation, but keep tool parameters in English.` : '';
+    // ─── Language detection: cached per conversation in Redis ───
+    const LANG_KEY_PREFIX = 'conv_lang:';
+    const redis = getRedis();
+    let detectedLang: string | null = null;
+
+    // 1. Check Redis cache for this conversation's language
+    if (conversationId && redis) {
+      detectedLang = await redis.get(`${LANG_KEY_PREFIX}${conversationId}`).catch(() => null);
+    }
+
+    // 2. If no cached language, try to detect from the latest user message
+    if (!detectedLang) {
+      const lastUserMsg = [...(uiMessages as { role: string; content?: string; parts?: { type?: string; text?: string }[] }[])]
+        .reverse()
+        .find((m) => m.role === 'user');
+      const userText = lastUserMsg?.parts?.find((p) => p.type === 'text')?.text ?? lastUserMsg?.content ?? '';
+      const inferred = detectLanguageCode(userText);
+      if (inferred) detectedLang = inferred;
+    }
+
+    // 3. Fallback to client-sent browser language
+    if (!detectedLang && language && language !== 'en') {
+      detectedLang = language;
+    }
+
+    // 4. Cache detected language in Redis for this conversation (7-day TTL)
+    if (conversationId && redis && detectedLang && detectedLang !== 'en') {
+      await redis.set(`${LANG_KEY_PREFIX}${conversationId}`, detectedLang, 'EX', 604800).catch(() => {});
+    }
+
+    // 3. Build language instruction — always include auto-detect rule
+    const langContext = detectedLang && detectedLang !== 'en'
+      ? `\n[LANGUAGE] The user's language is **${detectedLang}**. You MUST respond entirely in ${detectedLang}. Keep tool parameter values (tool calls) in English, but ALL user-facing text, questions, labels, and quick-reply labels must be in ${detectedLang}. If the user switches to a different language mid-conversation, follow their new language immediately.`
+      : `\n[LANGUAGE] Auto-detect the user's language from their messages. If the user writes in a non-English language, respond in THAT language for the rest of the conversation. Keep tool parameter values in English, but all user-facing text must match the user's language. Default to English if uncertain.`;
     const quickReplyContext = `\n[QUICK REPLIES]\n- When a short follow-up choice would help the user move faster, append a hidden quick reply block at the END of the assistant text using EXACTLY this format:\n[QUICK_REPLIES]\n- Label :: user message to send\n- Label :: user message to send\n[/QUICK_REPLIES]\n- Use at most 4 quick replies.\n- Use this for confirmations, option 1 vs option 2, add-ons like coffee break or breakfast, next-step choices, and simple yes/no decisions.\n- The visible assistant message must stay concise. Do NOT repeat the same choices in prose if you include quick replies.\n- Each quick reply message should be a complete user instruction, for example: Add coffee break and breakfast to the proposal.\n- Never mention the QUICK_REPLIES syntax to the user.`;
     const roleContext = role === 'sales'
       ? `\n\n[CONTEXT] User role: sales. You are a sales copilot for analytics and proposal operations. You can create dynamic visualizations (charts, dashboards, trends, comparisons) and also help draft/create/revise proposals.${companyContext}${userContext}${userNameContext}${langContext}${quickReplyContext}\n\n[SALES CHAT RULES]\n- You can do BOTH: (1) analytics/data visualization and (2) proposal generation/revision workflows.\n- For analytics requests, use queryProposalData + renderChart to deliver the requested visual output.\n- For proposal-generation requests, collect missing essentials (event type, date/time, guests, venue, budget, contact), then call generateProposalDraft.\n- Treat generateProposalDraft as a preview step; only create the actual proposal after user confirmation by calling acceptProposal with the draft_input from the latest draft.\n- If the user asks to revise price or package, use reviseProposalPricing and explain what changed.\n- You can search, view, patch, and analyze existing proposals as part of the same conversation.\n- You can check availability, view content, and use company data while preparing proposals.\n- ALWAYS use the company_id from [COMPANY ID] above when any tool requires it.`
@@ -71,7 +136,7 @@ export async function POST(request: Request) {
     const messages = await convertToModelMessages(uiMessages);
 
     const result = streamText({
-      model: gateway(process.env.AI_MODEL || 'openai/gpt-4o'),
+      model: gateway(process.env.AI_MODEL || 'openai/gpt-5.2'),
       system: systemPrompt + roleContext,
       messages,
       tools,

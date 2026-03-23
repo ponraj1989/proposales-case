@@ -1,6 +1,6 @@
 # Proposales Platform
 
-A professional proposal management platform built with **Next.js 15**, **Turborepo**, and the **Proposales API**, featuring an AI-powered sales assistant, real-time activity feed, guest proposal portal, and mock PMS integration.
+A professional proposal management platform built with **Next.js 16**, **Turborepo**, and the **Proposales API**, featuring an AI-powered sales assistant, real-time activity feed, guest proposal portal, and mock PMS integration.
 
 ---
 
@@ -19,7 +19,7 @@ A professional proposal management platform built with **Next.js 15**, **Turbore
           │ SSE             │ stream                │ SWR fetch
           ▼                 ▼                       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Next.js 15 App (App Router)                     │
+│                     Next.js 16 App (App Router)                     │
 │                                                                     │
 │  ┌─────────────────────┐   ┌────────────────────────────────────┐  │
 │  │ /api/activity-feed  │   │ /api/ai/chat                       │  │
@@ -50,7 +50,9 @@ A professional proposal management platform built with **Next.js 15**, **Turbore
      │   events (pub/sub)│          │ PmsHold               │
      │ activity:feed:    │          │ EmailLog              │
      │   seen (dedup SET)│          │ Event / Booking       │
-     │ rate:<key>        │          └───────────────────────┘
+     │ conv_lang:<id>    │          └───────────────────────┘
+     │ proposals:feed:*  │
+     │ rate:<key>        │
      └───────────────────┘
               ▲
               │ pub/sub
@@ -71,7 +73,7 @@ A professional proposal management platform built with **Next.js 15**, **Turbore
 ```
 proposales-platform/
 ├── apps/
-│   └── web/                   # Next.js 15 App (App Router)
+│   └── web/                   # Next.js 16 App (App Router)
 │       ├── app/api/           # All API route handlers
 │       │   ├── ai/            # chat streaming + conversations
 │       │   ├── activity-feed/ # SSE stream + polling endpoint
@@ -115,7 +117,7 @@ proposales-platform/
 ### Guest Portal
 - **My Proposals** page — lists all proposals for the authenticated guest
 - Merges local `UserProposal` records with live Proposales API data
-- Auto-refreshes every 20 seconds via SWR `mutate` + `setInterval`
+- Real-time updates via SSE (`/api/my-proposals/stream`) with 60-second SWR polling fallback
 - Visual status tracker: Draft → Sent → Viewed → Signed (+ terminal states)
 
 ### Proposales Webhook Integration
@@ -136,7 +138,7 @@ proposales-platform/
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 15 (App Router, RSC) |
+| Framework | Next.js 16 (App Router, RSC) |
 | Language | TypeScript 5, React 19 |
 | Monorepo | Turborepo |
 | Styling | Tailwind CSS + custom Proposales theme |

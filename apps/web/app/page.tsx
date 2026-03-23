@@ -555,6 +555,7 @@ function HelpSection() {
               <li>• Use AI concierge for rooms, boardrooms, event venues, and pricing guidance.</li>
               <li>• Review proposal options, request changes, and continue conversations.</li>
               <li>• No access to internal sales analytics, pipeline, or other customer data.</li>
+              <li>• 🌍 Multi-language AI — chat in English, Swedish, German, French, Spanish, Chinese, Arabic, Japanese and more.</li>
             </ul>
           </div>
 
@@ -569,6 +570,7 @@ function HelpSection() {
               <li>• Use analytics chat for trends, comparisons, KPIs, and visual dashboards.</li>
               <li>• Revise pricing/packages with AI and manage proposals from dashboard workflows.</li>
               <li>• Monitor outcomes and optimize conversion using data insights.</li>
+              <li>• 🌍 Multi-language support — AI auto-detects your language and responds in kind.</li>
             </ul>
           </div>
         </div>
