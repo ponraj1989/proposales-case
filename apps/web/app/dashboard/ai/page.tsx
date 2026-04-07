@@ -2380,10 +2380,9 @@ function ChatMessage({
           );
           if (pendingTools.length === 0) return null;
 
-          const hasRunning = pendingTools.some((t) => t.state !== 'output-available');
           const allDone = pendingTools.every((t) => t.state === 'output-available');
 
-          if (allDone) return null; // hide once all tools are done and text is streamed
+          if (allDone || !isLoading) return null; // hide once all tools are done or streaming has stopped
 
           // Determine a user-friendly label based on running tools
           const runningTool = pendingTools.find((t) => t.state !== 'output-available');
