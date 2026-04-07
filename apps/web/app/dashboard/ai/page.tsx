@@ -2070,7 +2070,9 @@ function ChatMessage({
   isLoading: boolean;
 }) {
   const rawText = getMessageText(message);
-  const { content: text, quickReplies } = extractQuickReplies(rawText);
+  const { content: rawContent, quickReplies } = extractQuickReplies(rawText);
+  // Strip raw JSON tool results that should be rendered as rich cards, not text
+  const text = stripToolResultJson(rawContent);
 
   // Extract tool parts — handle both flat DynamicToolUIPart and nested ToolInvocation formats
   const toolParts: ToolPart[] = [];
@@ -2382,7 +2384,8 @@ function ChatMessage({
 
           const allDone = pendingTools.every((t) => t.state === 'output-available');
 
-          if (allDone || !isLoading) return null; // hide once all tools are done or streaming has stopped
+          // Hide when: all tools done, streaming stopped, or response text already rendered
+          if (allDone || !isLoading || text) return null;
 
           // Determine a user-friendly label based on running tools
           const runningTool = pendingTools.find((t) => t.state !== 'output-available');
@@ -3383,6 +3386,41 @@ function formatToolName(name: string): string {
     .replace(/_/g, ' ')
     .replace(/^./, (s) => s.toUpperCase())
     .trim();
+}
+
+const RICH_TOOL_RESULT_TYPES = new Set([
+  'chart', 'proposal_draft', 'booking_confirmed', 'image_result',
+  'availability', 'pricing_calculation', 'pricing', 'availability_calendar',
+  'floor_plan', 'user_input_request', 'esign_redirect', 'proposal_status',
+]);
+
+function stripToolResultJson(text: string): string {
+  if (!text) return text;
+  const trimmed = text.trim();
+  // Case 1: entire text is a single JSON tool result
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && RICH_TOOL_RESULT_TYPES.has(parsed.type)) {
+        return '';
+      }
+    } catch { /* not valid JSON, keep as-is */ }
+  }
+  // Case 2: text contains embedded JSON tool results (e.g. "Here's the chart: {...}")
+  // Remove JSON objects that match tool result patterns
+  const cleaned = trimmed.replace(
+    /\{[\s\S]*?"type"\s*:\s*"(chart|proposal_draft|booking_confirmed|image_result)"[\s\S]*\}/g,
+    (match) => {
+      try {
+        const parsed = JSON.parse(match);
+        if (parsed && typeof parsed === 'object' && RICH_TOOL_RESULT_TYPES.has(parsed.type)) {
+          return '';
+        }
+      } catch { /* not valid JSON */ }
+      return match;
+    },
+  ).trim();
+  return cleaned;
 }
 
 function getThinkingLabel(toolName: string): string {

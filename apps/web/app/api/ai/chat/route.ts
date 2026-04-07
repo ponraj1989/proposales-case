@@ -258,7 +258,23 @@ export async function POST(request: Request) {
                   }
                 }
                 if (s.text) {
-                  assistantParts.push({ type: 'text', text: s.text });
+                  // Skip text that is a raw JSON tool result (should be rendered as rich cards)
+                  const trimmed = s.text.trim();
+                  let isToolResultJson = false;
+                  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                    try {
+                      const parsed = JSON.parse(trimmed);
+                      if (parsed && typeof parsed === 'object' &&
+                          ['chart', 'proposal_draft', 'booking_confirmed', 'image_result',
+                           'availability', 'pricing', 'pricing_calculation', 'availability_calendar',
+                           'floor_plan', 'user_input_request', 'esign_redirect'].includes(parsed.type)) {
+                        isToolResultJson = true;
+                      }
+                    } catch { /* not JSON, keep it */ }
+                  }
+                  if (!isToolResultJson) {
+                    assistantParts.push({ type: 'text', text: s.text });
+                  }
                 }
               }
             }
